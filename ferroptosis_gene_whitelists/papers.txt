@@ -1,0 +1,6 @@
+*PDK4: https://pubmed.ncbi.nlm.nih.gov/33626342/
+*CKB: https://pubmed.ncbi.nlm.nih.gov/37156912/
+*CACNA1G-AS1: https://pubmed.ncbi.nlm.nih.gov/37304234/
+*BEX1: https://pubmed.ncbi.nlm.nih.gov/33745298/
+
+HSPA5: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10048805/

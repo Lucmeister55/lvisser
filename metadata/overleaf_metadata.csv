@@ -1,0 +1,5 @@
+Cell Line	Tumor Type	Ferroptosis Sensitivity	Gender	Age (months)
+IMR-32	Neuroblastoma	Sensitive	Male	13
+SH-EP	Neuroblastoma	Sensitive	Female	48
+SH-SY5Y	Neuroblastoma	Resistant	Female	48
+SK-N-BE(2)-C	Neuroblastoma	Resistant	Male	26
