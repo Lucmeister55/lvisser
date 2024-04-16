@@ -141,6 +141,7 @@ def create_fm(meth_seg, metadata):
     meth_seg_fm = meth_seg_fm.loc[:, (meth_seg_fm != 0).any(axis=0)]
 
     return meth_seg_fm
+
 def create_fm_wgbs(df, metadata):
     processed_df = df.select_dtypes(include=[float])
     processed_df['segment_id'] = df['segment_id']
@@ -378,9 +379,6 @@ def process_wgbs_dmr_files(folder):
     df_concat = pd.concat(dfs, ignore_index=True)
 
     df_concat = df_concat.rename(columns={'#chr': 'chrom', 'region': 'segment_id'})
-
-    # Add an empty 'gene_symbol' column
-    df_concat['gene_symbol'] = "none"
 
     df_concat["length"] = df_concat["end"] - df_concat["start"]
 

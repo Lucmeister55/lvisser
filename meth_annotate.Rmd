@@ -1,0 +1,227 @@
+
+## Import packages
+```{r}
+library(rGREAT)
+library(genomation)
+library(methylKit)
+library(tidyverse)
+library(ggbio)
+library(GenomicFeatures)
+library(GenomicRanges)
+
+output_dir <- "/data/lvisser/post_analysis"
+```
+
+```{r}
+DE_results_human_Group_R_S_MM <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_S_MM.csv") %>%
+  filter(padj < 0.05)
+DE_results_human_Group_R_S_NB <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_S_NB.csv") %>%
+  filter(padj < 0.05)
+DE_results_human_Group_R_Ss_sensSHY <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_Ss_sensSHY.csv") %>%
+  filter(padj < 0.05)
+```
+
+```{r}
+gene.obj=readTranscriptFeatures("/data/lvisser/segmentations/genes_refseq_all_ucsc.bed")
+head(gene.obj)
+```
+
+```{r}
+cgi.obj=readFeatureFlank("/data/lvisser/segmentations/cpg_islands_ucsc_cleaned.bed",
+                           feature.flank.name=c("CpGi","shores"))
+head(cgi.obj)
+```
+
+```{r}
+annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj) {
+  geneDMRann <- annotateWithGeneParts(as(df,"GRanges"),gene.obj)
+  cgiDMRann <- annotateWithFeatureFlank(as(df,"GRanges"),
+    cgi.obj$CpGi,cgi.obj$shores,
+    feature.name="CpGi",flank.name="shores")
+  
+  # Capture the terminal outputs of geneDMRann and cgiDMRann
+  output_geneDMRann <- capture.output(geneDMRann)
+  output_cgiDMRann <- capture.output(cgiDMRann)
+  
+  # Define the output file names
+  output_file_gene <- paste0(output_dir, "/geneDMRann_", name, ".txt")
+  output_file_cgi <- paste0(output_dir, "/cgiDMRann_", name, ".txt")
+  
+  # Save the terminal outputs to the output files
+  writeLines(output_geneDMRann, con = output_file_gene)
+  writeLines(output_cgiDMRann, con = output_file_cgi)
+}
+```
+
+```{r}
+# R
+enrich_regions <- function(df, output_dir, name) {
+  res <- great(as(df,"GRanges"), "MSigDB:H", "txdb:hg38")
+  
+  # Define the output file names
+  volcano_plot_file <- paste0(output_dir, "/volcano_plot_", name, ".png")
+  region_gene_associations_plot_file <- paste0(output_dir, "/region_gene_associations_plot_", name, ".png")
+  enrichment_table_file <- paste0(output_dir, "/enrichment_table_", name, ".csv")
+  region_gene_associations_file <- paste0(output_dir, "/region_gene_associations_", name, ".csv")
+  
+  # Save the volcano plot
+  png(volcano_plot_file)
+  plotVolcano(res)
+  dev.off()
+  
+  # Save the region-gene associations plot
+  png(region_gene_associations_plot_file)
+  plotRegionGeneAssociations(res)
+  dev.off()
+  
+  # Save the enrichment table
+  tb <- getEnrichmentTable(res)
+  write.csv(tb, file = enrichment_table_file)
+  
+  # Save the region-gene associations
+  rg <- getRegionGeneAssociations(res)
+  # Convert the GRanges object to a data frame
+  rg_df <- as.data.frame(rg)
+  
+  # Convert the list columns to character strings
+  rg_df$annotated_genes <- sapply(rg_df$annotated_genes, paste, collapse = ", ")
+  rg_df$dist_to_TSS <- sapply(rg_df$dist_to_TSS, paste, collapse = ", ")
+  
+  # Write the data frame to a file
+  write.csv(rg_df, file = region_gene_associations_file)
+}
+```
+
+## Roberto
+
+```{r}
+directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/NB1_only", 
+                 "/data/lvisser/wgbs_tools/outputs/dmr/roberto_only")
+
+# Initialize an empty list
+all_bed_data <- list()
+
+# R
+for (directory in directories) {
+  bed_files <- list.files(directory, pattern = "\\.bed$", recursive = TRUE, full.names = TRUE)
+  print(bed_files)  # Print file paths
+  dir_bed_data <- NULL
+  # R
+  for (bed_file in bed_files) {
+    if (!file.exists(bed_file)) {
+      print(paste("File does not exist:", bed_file))
+      next
+    }
+    if (file.info(bed_file)$size == 0) {
+      print(paste("File is empty:", bed_file))
+      next
+    }
+    if (length(readLines(bed_file)) <= 1) {
+      print(paste("File only contains header:", bed_file))
+      next
+    }
+    bed_data <- readGeneric(bed_file, header = TRUE, keep.all.metadata = TRUE)
+    bed_data_df <- as.data.frame(bed_data)  # Convert to data frame
+    dir_bed_data <- rbind(dir_bed_data, bed_data_df)
+  }
+  # Add the dataframe to the list with the directory name as the key
+  all_bed_data[[directory]] <- dir_bed_data
+}
+```
+```{r}
+for (i in 1:length(all_bed_data)) {
+  name <- basename(directories[i])
+  annotate_regions(as(all_bed_data[[i]],"GRanges"), output_dir, name, gene.obj, cgi.obj)
+}
+```
+
+```{r}
+# R
+for (i in 1:length(all_bed_data)) {
+  name <- basename(directories[i])
+  enrich_regions(as(all_bed_data[[i]],"GRanges"), output_dir, name)
+}
+```
+
+```{r}
+# Assuming gr is your GRanges object
+gr <- all_bed_data[["/data/lvisser/wgbs_tools/outputs/dmr/roberto_only"]]
+
+# Add a new column for the color
+gr$color <- ifelse(gr$bg_mean > gr$tg_mean, "red", "blue")
+# Add a new column for the y position
+gr$diff <- gr$bg_mean - gr$tg_mean 
+
+gr <- as(gr, "GRanges")
+
+# Load the cytoband data for the hg38 assembly
+hg38_cyto <- getChromInfoFromUCSC("hg38", as.Seqinfo = TRUE, assembled.molecules.only = TRUE)
+
+# Open a PNG device
+png("karyogram.png")
+
+# Create a karyogram
+p <- autoplot(hg38_cyto, layout = "karyogram") + layout_karyogram(gr, col = gr$color)
+p
+
+# Close the PNG device
+dev.off()
+```
+
+```{r}
+head(gr)
+```
+
+## Model Features
+
+```{r}
+read_shap_csv <- function(file_path) {
+  df <- read.csv(file_path)
+  df <- df %>%
+    separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]")
+  df <- as(df,"GRanges")
+
+  return(df)
+}
+```
+
+```{r}
+files <- c("/data/lvisser/shap/shap_wgbs_mm1_df_annot.csv",
+  "/data/lvisser/shap/shap_wgbs_nb1_df_annot.csv")
+
+# Initialize an empty list
+all_shap_data <- list()
+
+for (file in files) {
+  shap_data <- read_shap_csv(file)
+  all_shap_data[[file]] <- shap_data
+}
+```
+
+```{r}
+for (i in 1:length(all_shap_data)) {
+  name <- basename(files[i])
+  annotate_regions(as(all_shap_data[[i]],"GRanges"), output_dir, name, gene.obj, cgi.obj)
+}
+```
+
+```{r}
+# R
+for (i in 1:length(all_shap_data)) {
+  name <- basename(files[i])
+  enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir, name)
+}
+```
+
+```{r}
+head(DE_results_human_Group_R_S_MM)
+```
+```{r}
+```
+```{r}
+```
+```{r}
+```
+
+
+
