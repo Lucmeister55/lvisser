@@ -635,6 +635,22 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
     # Calculate the z-scores of the average SHAP values
     shap_df['z_score'] = zscore(shap_df['reliability_shap_value'])
 
+    # Calculate the average methylation across R and S samples for each feature
+    avg_meth_R = X[meth_seg_fm["Group"] == "R"].mean()
+    avg_meth_S = X[meth_seg_fm["Group"] == "S"].mean()
+
+    # Convert the series to dataframes
+    avg_meth_R_df = avg_meth_R.to_frame().reset_index().rename(columns={"index": "segment_id", 0: "avg_meth_R"})
+    avg_meth_S_df = avg_meth_S.to_frame().reset_index().rename(columns={"index": "segment_id", 0: "avg_meth_S"})
+
+    # Merge the average methylation dataframes into shap_df
+    shap_df = pd.merge(shap_df, avg_meth_R_df, on="segment_id", how="left")
+    shap_df = pd.merge(shap_df, avg_meth_S_df, on="segment_id", how="left")
+
+    shap_df["diff"] = shap_df["avg_meth_R"] - shap_df["avg_meth_S"]
+
+    shap_df["direction"] = np.where(shap_df["diff"] > 0, "M", "U")
+
     print(f"Average accuracy: {np.mean(accuracies)}")
 
     return shap_df
