@@ -34,6 +34,7 @@ from sklearn.manifold import TSNE
 from statsmodels.stats.multitest import multipletests
 import shap
 import pyranges as pr
+from joblib import dump
 
 import sklearn
 from sklearn.model_selection import train_test_split, cross_val_score, LeaveOneOut
@@ -578,7 +579,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
     accuracies = []
 
     # Initialize the dictionary
-    shap_dict = {col: [0, 0] for col in X.columns}
+    shap_dict = {col: [0, 0, []] for col in X.columns}
 
     for train_index, test_index in loo.split(X):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
@@ -608,15 +609,17 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
                 shap_dict[col][1] += shap_values.values[0][i]  # Update reliability_shap_value
             else:
                 shap_dict[col][1] -= shap_values.values[0][i]  # Update reliability_shap_value
+            shap_dict[col][2].append(shap_values.values[0][i])  # Append the SHAP value to the list
 
     # Divide the accumulated SHAP values by the number of iterations to get the average
     for col in shap_dict:
         shap_dict[col][0] /= len(accuracies)
         shap_dict[col][1] /= len(accuracies)
+        shap_dict[col][2] = np.var(shap_dict[col][2])
 
     # Convert the dictionary to a DataFrame
-    shap_df = pd.DataFrame.from_dict(shap_dict, orient='index', columns=['average_shap_value', 'reliability_shap_value'])
-
+    shap_df = pd.DataFrame.from_dict(shap_dict, orient='index', columns=['average_shap_value', 'reliability_shap_value', 'shap_variance'])
+    
     # Reset the index to add the feature names as a column
     shap_df.reset_index(inplace=True)
 
@@ -673,3 +676,14 @@ def plot_pvalue_distribution(pvalues):
 
     # Show the plot
     plt.show()
+
+def save_model(model, train_indices, test_indices, name, base_path='/data/lvisser/models/model_'):
+    # Convert indices to strings
+    train_indices_str = '_'.join(map(str, train_indices))
+    test_indices_str = '_'.join(map(str, test_indices))
+
+    # Create the filename
+    filename = f'{base_path}{name}_train_{train_indices_str}_test_{test_indices_str}.joblib'
+
+    # Save the model to a file
+    dump(model, filename)
