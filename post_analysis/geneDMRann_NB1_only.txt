@@ -1,8 +1,0 @@
-  promoter       exon     intron intergenic 
-      7.25      13.19      53.29      42.73 
-  promoter       exon     intron intergenic 
-      7.25       9.41      40.60      42.73 
-promoter     exon   intron 
-    4.59     1.26     3.92 
-   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-      0    7928   24348   48513   59209 3655641 

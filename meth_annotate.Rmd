@@ -31,34 +31,81 @@ DE_results_list <- list(
 ```
 
 ```{r}
-gene.obj=readTranscriptFeatures("/data/lvisser/segmentations/genes_refseq_all_ucsc.bed")
+gene.obj <- readTranscriptFeatures("/data/lvisser/segmentations/genes_refseq_all_ucsc.bed")
 head(gene.obj)
 ```
 
 ```{r}
-cgi.obj=readFeatureFlank("/data/lvisser/segmentations/cpg_islands_ucsc_cleaned.bed",
+cgi.obj <- readFeatureFlank("/data/lvisser/segmentations/cpg_islands_ucsc_cleaned.bed",
                            feature.flank.name=c("CpGi","shores"))
 head(cgi.obj)
 ```
 
 ```{r}
-annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj) {
-  geneDMRann <- annotateWithGeneParts(as(df,"GRanges"),gene.obj)
-  cgiDMRann <- annotateWithFeatureFlank(as(df,"GRanges"),
+reg.obj <- readGeneric("/data/lvisser/segmentations/encode_ccres_ucsc.bed", keep.all.metadata = TRUE, header = TRUE)
+reg.obj <- split(reg.obj, mcols(reg.obj)$soTerm)
+head(reg.obj)
+```
+
+```{r}
+head(reg.obj)
+```
+
+```{r}
+annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
+  # Separate hypermethylated and hypomethylated regions
+  df_hyper <- df[df$direction == "M",]
+  df_hypo <- df[df$direction == "U",]
+
+  # Calculate percentages
+  percent_hyper <- round(nrow(df_hyper) / nrow(df) * 100, 2)
+  percent_hypo <- round(nrow(df_hypo) / nrow(df) * 100, 2)
+
+  # Annotate regions for both hypermethylated and hypomethylated
+  geneDMRann_hyper <- annotateWithGeneParts(as(df_hyper,"GRanges"),gene.obj)
+  geneDMRann_hypo <- annotateWithGeneParts(as(df_hypo,"GRanges"),gene.obj)
+
+  cgiDMRann_hyper <- annotateWithFeatureFlank(as(df_hyper,"GRanges"),
     cgi.obj$CpGi,cgi.obj$shores,
     feature.name="CpGi",flank.name="shores")
-  
-  # Capture the terminal outputs of geneDMRann and cgiDMRann
-  output_geneDMRann <- capture.output(geneDMRann)
-  output_cgiDMRann <- capture.output(cgiDMRann)
-  
+  cgiDMRann_hypo <- annotateWithFeatureFlank(as(df_hypo,"GRanges"),
+    cgi.obj$CpGi,cgi.obj$shores,
+    feature.name="CpGi",flank.name="shores")
+
+  regDMRann_hyper <- annotateWithFeatures(as(df_hyper,"GRanges"),reg.obj)
+  regDMRann_hypo <- annotateWithFeatures(as(df_hypo,"GRanges"),reg.obj)
+
   # Define the output file names
-  output_file_gene <- paste0(output_dir, "/geneDMRann_", name, ".txt")
-  output_file_cgi <- paste0(output_dir, "/cgiDMRann_", name, ".txt")
-  
-  # Save the terminal outputs to the output files
-  writeLines(output_geneDMRann, con = output_file_gene)
-  writeLines(output_cgiDMRann, con = output_file_cgi)
+  output_file_gene <- paste0(output_dir, "/geneDMRann_piechart_", name, ".png")
+  output_file_cgi <- paste0(output_dir, "/cgiDMRann_piechart_", name, ".png")
+  output_file_reg <- paste0(output_dir, "/regDMRann_piechart_", name, ".png")
+
+  # Specify width and height in pixels
+  width <- 800
+  height <- 600
+
+  # Plot for both hypermethylated and hypomethylated regions
+  png(output_file_gene, width = width, height = height)
+  par(mfrow = c(1, 2))
+  genomation::plotTargetAnnotation(geneDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(geneDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  dev.off()
+
+  png(output_file_cgi, width = width, height = height)
+  par(mfrow = c(1, 2))
+  genomation::plotTargetAnnotation(cgiDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(cgiDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  dev.off()
+
+  # Define colors for each type of regulatory feature
+  feature_colors = c("promoter-like signature" = "red", "proximal enhancer-like signature" = "orange", "distal enhancer-like signature" = "yellow", "DNase-H3K4me3" = "pink", "CTCF-only" = "blue")
+
+  # Plot target annotation with specified colors
+  png(output_file_reg, width = width, height = height)
+  par(mfrow = c(1, 2))
+  genomation::plotTargetAnnotation(regDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(regDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  dev.off()
 }
 ```
 
@@ -193,6 +240,30 @@ link_meth_to_dge <- function(merged_df, output_dir, name) {
 }
 ```
 
+```{r}
+create_karyogram <- function(gr, output_dir, name) {
+  # Add a new column for the color
+  gr$color <- ifelse(gr$direction == "M", "red", "blue") 
+
+  gr <- as(gr, "GRanges")
+
+  # Load the cytoband data for the hg38 assembly
+  hg38_cyto <- getChromInfoFromUCSC("hg38", as.Seqinfo = TRUE, assembled.molecules.only = TRUE)
+
+  output_file <- paste0(output_dir, "/karyogram_", name, ".png")
+
+  # Open a PNG device
+  png(output_file)
+
+  # Create a karyogram
+  p <- autoplot(hg38_cyto, layout = "karyogram") + layout_karyogram(gr, col = gr$color)
+  print(p)
+
+  # Close the PNG device
+  dev.off()
+}
+```
+
 ## Roberto
 
 ```{r}
@@ -229,12 +300,6 @@ for (directory in directories) {
   all_bed_data[[directory]] <- dir_bed_data
 }
 ```
-```{r}
-for (i in 1:length(all_bed_data)) {
-  name <- basename(directories[i])
-  annotate_regions(as(all_bed_data[[i]],"GRanges"), output_dir, name, gene.obj, cgi.obj)
-}
-```
 
 ```{r}
 dge_names <- c("R_S_NB", "R_Ss_sensSHY")
@@ -242,41 +307,14 @@ merged_list <- list()
 
 for (i in 1:length(all_bed_data)) {
   name <- basename(directories[i])
-  merged_df <- enrich_regions(as(all_bed_data[[i]],"GRanges"), output_dir, name, DE_results_list[[dge_names[i]]])
+  output_dir_name <- paste0(output_dir, "/", name)
+  dir.create(output_dir_name, showWarnings = FALSE)
+  annotate_regions(all_bed_data[[i]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
+  merged_df <- enrich_regions(as(all_bed_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]])
   merged_list[[name]] <- merged_df
+  link_meth_to_dge(merged_list[[i]], output_dir_name, name)
+  create_karyogram(merged_list[[i]], output_dir_name, name)
 }
-```
-
-```{r}
-for (i in 1:length(merged_list)) {
-  name <- basename(directories[i])
-  link_meth_to_dge(merged_list[[i]], output_dir, name)
-}
-```
-
-```{r}
-# Assuming gr is your GRanges object
-gr <- all_bed_data[["/data/lvisser/wgbs_tools/outputs/dmr/roberto_only"]]
-
-# Add a new column for the color
-gr$color <- ifelse(gr$bg_mean > gr$tg_mean, "red", "blue")
-# Add a new column for the y position
-gr$diff <- gr$bg_mean - gr$tg_mean 
-
-gr <- as(gr, "GRanges")
-
-# Load the cytoband data for the hg38 assembly
-hg38_cyto <- getChromInfoFromUCSC("hg38", as.Seqinfo = TRUE, assembled.molecules.only = TRUE)
-
-# Open a PNG device
-png("/data/lvisser/post_analysis/karyogram_roberto.png")
-
-# Create a karyogram
-p <- autoplot(hg38_cyto, layout = "karyogram") + layout_karyogram(gr, col = gr$color)
-p
-
-# Close the PNG device
-dev.off()
 ```
 
 ## Model Features
@@ -284,11 +322,10 @@ dev.off()
 ```{r}
 read_shap_csv <- function(file_path) {
   df <- read.csv(file_path) %>%
-    filter(z_score >= 1)
+    filter(z_score >= 2)
 
   df <- df %>%
     separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]")
-  df <- as(df,"GRanges")
 
   return(df)
 }
@@ -308,37 +345,19 @@ for (file in files) {
 ```
 
 ```{r}
-for (i in 1:length(all_shap_data)) {
-  name <- basename(files[i])
-  annotate_regions(as(all_shap_data[[i]],"GRanges"), output_dir, name, gene.obj, cgi.obj)
-}
-```
-
-```{r}
 dge_names <- c("R_S_MM", "R_S_NB")
 merged_list <- list()
 
 for (i in 1:length(all_shap_data)) {
   name <- basename(files[i])
-  merged_df <- enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir, name, DE_results_list[[dge_names[i]]])
+  output_dir_name <- paste0(output_dir, "/", name)
+  dir.create(output_dir_name, showWarnings = FALSE)
+  annotate_regions(all_shap_data[[i]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
+  merged_df <- enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]])
   merged_list[[name]] <- merged_df
+  link_meth_to_dge(merged_list[[i]], output_dir_name, name)
+  create_karyogram(merged_list[[i]], output_dir_name, name)
 }
 ```
-
-```{r}
-for (i in 1:length(merged_list)) {
-  name <- basename(files[i])
-  link_meth_to_dge(merged_list[[i]], output_dir, name)
-}
-```
-
-```{r}
-merged_list
-```
-```{r}
-```
-```{r}
-```
-
 
 
