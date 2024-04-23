@@ -43,7 +43,7 @@ head(cgi.obj)
 
 ```{r}
 reg.obj <- readGeneric("/data/lvisser/segmentations/encode_ccres_ucsc.bed", keep.all.metadata = TRUE, header = TRUE)
-reg.obj <- split(reg.obj, mcols(reg.obj)$soTerm)
+reg.obj <- split(reg.obj, mcols(reg.obj)$ucscLabel)
 head(reg.obj)
 ```
 
@@ -267,8 +267,9 @@ create_karyogram <- function(gr, output_dir, name) {
 ## Roberto
 
 ```{r}
-directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/NB1_only", 
-                 "/data/lvisser/wgbs_tools/outputs/dmr/roberto_only")
+directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/MM1_only",
+  "/data/lvisser/wgbs_tools/outputs/dmr/NB1_only", 
+  "/data/lvisser/wgbs_tools/outputs/dmr/roberto_only")
 
 # Initialize an empty list
 all_bed_data <- list()
@@ -302,7 +303,7 @@ for (directory in directories) {
 ```
 
 ```{r}
-dge_names <- c("R_S_NB", "R_Ss_sensSHY")
+dge_names <- c("R_S_MM", "R_S_NB", "R_Ss_sensSHY")
 merged_list <- list()
 
 for (i in 1:length(all_bed_data)) {
@@ -333,7 +334,8 @@ read_shap_csv <- function(file_path) {
 
 ```{r}
 files <- c("/data/lvisser/shap/shap_wgbs_mm1_df_annot.csv",
-  "/data/lvisser/shap/shap_wgbs_nb1_df_annot.csv")
+  "/data/lvisser/shap/shap_wgbs_nb1_df_annot.csv", 
+  "/data/lvisser/shap/shap_wgbs_rob_df_annot.csv")
 
 # Initialize an empty list
 all_shap_data <- list()
@@ -345,11 +347,11 @@ for (file in files) {
 ```
 
 ```{r}
-dge_names <- c("R_S_MM", "R_S_NB")
+dge_names <- c("R_S_MM", "R_S_NB", "R_Ss_sensSHY")
 merged_list <- list()
 
 for (i in 1:length(all_shap_data)) {
-  name <- basename(files[i])
+  name <- sub("\\.csv$", "", basename(files[i]))
   output_dir_name <- paste0(output_dir, "/", name)
   dir.create(output_dir_name, showWarnings = FALSE)
   annotate_regions(all_shap_data[[i]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
