@@ -75,6 +75,19 @@ annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
   regDMRann_hyper <- annotateWithFeatures(as(df_hyper,"GRanges"),reg.obj)
   regDMRann_hypo <- annotateWithFeatures(as(df_hypo,"GRanges"),reg.obj)
 
+  # Add "other" category to the annotation slot
+  regDMRann_hyper@annotation["other"] <- 100-sum(regDMRann_hyper@precedence)
+  regDMRann_hypo@annotation["other"] <- 100-sum(regDMRann_hypo@precedence)
+
+  regDMRann_hyper@precedence["other"] <- 100-sum(regDMRann_hyper@precedence)
+  regDMRann_hypo@precedence["other"] <- 100-sum(regDMRann_hypo@precedence)
+
+  regDMRann_hyper@num.annotation["other"] <- Inf
+  regDMRann_hypo@num.annotation["other"] <- Inf
+
+  regDMRann_hyper@num.precedence["other"] <- Inf
+  regDMRann_hypo@num.precedence["other"] <- Inf
+
   # Define the output file names
   output_file_gene <- paste0(output_dir, "/geneDMRann_piechart_", name, ".png")
   output_file_cgi <- paste0(output_dir, "/cgiDMRann_piechart_", name, ".png")
@@ -96,9 +109,6 @@ annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
   genomation::plotTargetAnnotation(cgiDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
   genomation::plotTargetAnnotation(cgiDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
   dev.off()
-
-  # Define colors for each type of regulatory feature
-  feature_colors = c("promoter-like signature" = "red", "proximal enhancer-like signature" = "orange", "distal enhancer-like signature" = "yellow", "DNase-H3K4me3" = "pink", "CTCF-only" = "blue")
 
   # Plot target annotation with specified colors
   png(output_file_reg, width = width, height = height)
@@ -267,8 +277,8 @@ create_karyogram <- function(gr, output_dir, name) {
 ## Roberto
 
 ```{r}
-directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/MM1_only",
-  "/data/lvisser/wgbs_tools/outputs/dmr/NB1_only", 
+directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/MM_only",
+  "/data/lvisser/wgbs_tools/outputs/dmr/NB_only", 
   "/data/lvisser/wgbs_tools/outputs/dmr/roberto_only")
 
 # Initialize an empty list
@@ -333,8 +343,8 @@ read_shap_csv <- function(file_path) {
 ```
 
 ```{r}
-files <- c("/data/lvisser/shap/shap_wgbs_mm1_df_annot.csv",
-  "/data/lvisser/shap/shap_wgbs_nb1_df_annot.csv", 
+files <- c("/data/lvisser/shap/shap_wgbs_mm_df_annot.csv",
+  "/data/lvisser/shap/shap_wgbs_nb_df_annot.csv", 
   "/data/lvisser/shap/shap_wgbs_rob_df_annot.csv")
 
 # Initialize an empty list
