@@ -355,12 +355,21 @@ def tm_pcc(meth_seg, metadata, DEG_full, pcc_file):
 
     return correlations_df
 
-def plot_correlation_distribution(correlations_df):
+def plot_correlation_distribution(correlations_df, title='Distribution of Correlations'):
     plt.figure(figsize=(10, 5))
     plt.hist(correlations_df['correlation'], bins=30, edgecolor='black')
     plt.xlabel('Correlation')
     plt.ylabel('Frequency')
-    plt.title('Distribution of Correlations')
+    plt.title(title)
+
+    # Calculate and display the number of correlations above and below 0
+    above_zero = sum(correlations_df['correlation'] > 0)
+    below_zero = sum(correlations_df['correlation'] < 0)
+    plt.text(0, 1.15, f'Negative correlations: {above_zero}', transform=plt.gca().transAxes)
+    plt.text(0, 1.1, f'Positive correlations: {below_zero}', transform=plt.gca().transAxes)
+
+    plt.show()
+
     plt.show()
 
 def process_wgbs_seg_files(folder):
@@ -713,21 +722,37 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
 
     return shap_df
 
-def plot_pvalue_distribution(pvalues):
+def plot_pvalue_distribution(pvalues, title='P-value Distribution'):
     """
     Function to plot the distribution of p-values.
 
     Parameters:
-    df (pandas.DataFrame): DataFrame containing the p-values.
-    pvalue_column (str): Name of the column in df that contains the p-values.
+    pvalues (pandas.Series): Series containing the p-values.
+    title (str): Title for the plot.
     """
     # Create a new figure
-    sns.displot(pvalues, kde=False, bins=30)
+    plt.figure(figsize=(10, 5))
+
+    # Plot the histogram, capture the output
+    counts, bins, patches = plt.hist(pvalues, bins=30, edgecolor='black')
+
+    # Color bars under or equal to 0.05
+    for count, bin, patch in zip(counts, bins, patches):
+        if bin <= 0.05:
+            patch.set_facecolor('red')
+        else:
+            patch.set_facecolor('gray')
 
     # Set the title and labels
-    plt.title('P-value Distribution')
+    plt.title(title)
     plt.xlabel('P-value')
     plt.ylabel('Frequency')
+
+    # Calculate and display the percentage of p-values under or equal to 0.05
+    under_05 = sum(pvalues <= 0.05)
+    total = len(pvalues)
+    percentage = (under_05 / total) * 100
+    plt.text(0, 1.1, f'Percentage p-values < 0.05: {percentage:.2f}%', transform=plt.gca().transAxes)
 
     # Show the plot
     plt.show()
