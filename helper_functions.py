@@ -35,6 +35,11 @@ from statsmodels.stats.multitest import multipletests
 import shap
 import pyranges as pr
 from joblib import dump
+from adjustText import adjust_text
+import matplotlib.patches as mpatches
+from itertools import product
+from matplotlib.lines import Line2D
+from scipy.stats import gaussian_kde
 
 import sklearn
 from sklearn.model_selection import train_test_split, cross_val_score, LeaveOneOut
@@ -211,23 +216,40 @@ def find_annot_overlap(df, annot):
 
     return df_annot
 
-def pca_plot(df, n_components=2, group_column=None, label_column=None):
+def pca_plot(df, n_components=2, color_column=None, marker_column=None, set_column = None, label_column=None, colors = None, markers = None):
+
+    # Standardize the features to have mean=0 and variance=1
+    features = df.select_dtypes(exclude=['object'])
+    scaler = StandardScaler()
+    scaled_features = scaler.fit_transform(features)
 
     # Perform PCA
     pca = PCA(n_components=n_components)
-    principalComponents = pca.fit_transform(df.select_dtypes(exclude=['object']))
+    principalComponents = pca.fit_transform(scaled_features)
 
     # Create a DataFrame with the principal components
     principalDf = pd.DataFrame(data = principalComponents, columns = ['principal component 1', 'principal component 2'])
 
-    # Add the 'Group' column back to the DataFrame
-    principalDf["group"] = df[group_column]
+    # If color_column is provided, use it as label
+    if color_column:
+        principalDf["color_group"] = df[color_column]
+        color_groups = np.sort(principalDf["color_group"].unique())
+        color_dict = {group: color for group, color in zip(color_groups, colors)}
+
+    if marker_column:
+        principalDf["marker_group"] = df[marker_column]
+        marker_groups = np.sort(principalDf["marker_group"].unique())
+        marker_dict = {group: markers[i % len(markers)] for i, group in enumerate(marker_groups)}
 
     # If label_column is provided, use it as label
     if label_column:
         principalDf["label"] = df[label_column]
     else:
-        principalDf["label"] = df[group_column]
+        principalDf["label"] = principalDf["color"]
+
+    # If set_column is provided, append it to the label
+    if set_column:
+        principalDf["label"] = principalDf["label"] + " (" + df[set_column] + ")"
 
     # Create a scatter plot
     fig = plt.figure(figsize = (8,8))
@@ -236,22 +258,45 @@ def pca_plot(df, n_components=2, group_column=None, label_column=None):
     ax.set_ylabel('Principal Component 2, Explained variance: {:.2%}'.format(pca.explained_variance_ratio_[1]), fontsize = 15)
     ax.set_title('2 component PCA', fontsize = 20)
 
-    groups = principalDf["group"].unique()
-    colors = ['r', 'g', 'b', 'y']  # Add more colors if you have more groups
-
-    for group, color in zip(groups, colors):
-        indicesToKeep = principalDf["group"] == group
+    texts = []  # list to store the labels
+    for color_group, marker_group in product(color_groups, marker_groups):
+        indicesToKeep = (principalDf["color_group"] == color_group) & (principalDf["marker_group"] == marker_group)
         scatter = ax.scatter(principalDf.loc[indicesToKeep, 'principal component 1']
-                   , principalDf.loc[indicesToKeep, 'principal component 2']
-                   , c = color
-                   , s = 50)
+                , principalDf.loc[indicesToKeep, 'principal component 2']
+                , c = color_dict[color_group]
+                , s = 50
+                , marker = marker_dict[marker_group])
         
         # Add labels to the data points
         for i in range(len(principalDf.loc[indicesToKeep, 'principal component 1'])):
-            ax.text(principalDf.loc[indicesToKeep, 'principal component 1'].values[i], principalDf.loc[indicesToKeep, 'principal component 2'].values[i], principalDf.loc[indicesToKeep, 'label'].values[i])
-    
-    # Add legend for colors
-    ax.legend(groups)
+            x = principalDf.loc[indicesToKeep, 'principal component 1'].values[i]
+            y = principalDf.loc[indicesToKeep, 'principal component 2'].values[i]
+            label = principalDf.loc[indicesToKeep, 'label'].values[i]
+            texts.append(ax.text(x, y, label, fontsize=12))  # Increase the font size here
+
+    # Adjust the labels to avoid overlap
+    adjust_text(texts, 
+            only_move={'points':'', 'texts':'xy', 'objects':'xy'}, 
+            arrowprops=dict(arrowstyle="->", color='gray'))
+
+    # Create lists to store the legend elements for colors and markers
+    color_legend_elements = []
+    marker_legend_elements = []
+
+    # Add a legend entry for each color group
+    for color_group in color_groups:
+        color_legend_elements.append(Line2D([0], [0], marker='o', color='w', label=color_group,
+                                            markerfacecolor=color_dict[color_group], markersize=10))
+
+    # Add a legend entry for each marker group
+    for marker_group in marker_groups:
+        marker_legend_elements.append(Line2D([0], [0], marker=marker_dict[marker_group], color='w', label=marker_group,
+                                            markerfacecolor='black', markersize=10))
+
+    # Create the legends
+    color_legend = plt.legend(handles=color_legend_elements, loc='upper left', bbox_to_anchor=(1, 1), title='Color Groups')
+    plt.gca().add_artist(color_legend)
+    plt.legend(handles=marker_legend_elements, loc='upper left', bbox_to_anchor=(1, 0.85), title='Marker Groups')
     ax.grid()
 
     plt.show()
@@ -549,9 +594,19 @@ def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, 
         retained_features_fm = X.loc[:, X_features_current]
         retained_features_fm["sample_id_adj"] = meth_seg_fm["sample_id_adj"]
         retained_features_fm["Group"] = meth_seg_fm["Group"]
-        print("PCA after filtering:")
+        retained_features_fm["tumor_type"] = meth_seg_fm["tumor_type"]
+        retained_features_fm["set"] = "test"  # Initially set all rows to "test"
+        retained_features_fm.loc[retained_features_fm.index.isin(train_indices), "set"] = "train"  # Set rows in train_indices to "train"
         retained_features_fm.reset_index(drop=True, inplace=True)
-        pca_plot(retained_features_fm, n_components=2, group_column="Group", label_column = "sample_id_adj")
+        unique_tumor_types = retained_features_fm["tumor_type"].unique()
+
+        if np.array_equal(unique_tumor_types, ["NB"]):
+            markers = ["o"]
+        elif np.array_equal(unique_tumor_types, ["MM"]):
+            markers = ["^"]
+        elif all(elem in unique_tumor_types for elem in ["NB", "MM"]):
+            markers = ["^", "o"]
+        pca_plot(retained_features_fm, color_column = "Group", marker_column = "tumor_type", set_column = "set", label_column = "sample_id_adj", colors = ["r", "g"], markers = markers)
 
     # Get the feature importances
     coeff = model.coef_[0]
