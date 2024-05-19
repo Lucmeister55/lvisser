@@ -17,3 +17,4 @@ CMap/
 ironsight/
 segmentations/
 __pycache__/
+post_analysis/*_seg/
