@@ -40,6 +40,7 @@ import matplotlib.patches as mpatches
 from itertools import product
 from matplotlib.lines import Line2D
 from scipy.stats import gaussian_kde
+import io
 
 import sklearn
 from sklearn.model_selection import train_test_split, cross_val_score, LeaveOneOut
@@ -52,6 +53,76 @@ from sklearn.metrics import classification_report, accuracy_score, silhouette_sc
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.cluster import DBSCAN
+
+def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist):
+    wgbs_seg_annot["segment_id"] = wgbs_seg_annot["seqnames"] + ":" + wgbs_seg_annot["start"].astype(str) + "-" + wgbs_seg_annot["end"].astype(str)
+    wgbs_seg_annot = wgbs_seg_annot.merge(wgbs_segcov[["segment_id", "avg_depth"]], on = "segment_id", how = "left")
+
+    frg_genes = whitelist['gene_symbol'].unique()
+    unique_segment_ids = wgbs_seg_annot['segment_id'].unique()
+    frg_associated_segment_ids = wgbs_seg_annot[wgbs_seg_annot['annotated_genes'].isin(frg_genes)]['segment_id'].unique()
+    percentage = (len(frg_associated_segment_ids) / len(unique_segment_ids)) * 100
+    print(f"The percentage of unique segment_ids associated with at least one frg is {percentage:.2f}%")
+
+    wgbs_seg_annot_filt = wgbs_seg_annot[
+        (wgbs_seg_annot["annotated_genes"].isin(whitelist["gene_symbol"])) &
+        (wgbs_seg_annot["avg_depth"] > 10) &
+        (wgbs_seg_annot["avg_depth"] < 40)
+    ]
+    plot_depth_distribution(wgbs_seg_annot_filt)
+
+    return wgbs_seg_annot_filt
+
+def plot_depth_distribution(df):
+    # Plot avg_depth distribution
+    plt.figure(figsize=(6, 4))
+    plt.hist(df['avg_depth'], bins=30, alpha=0.5, color='g')
+    plt.title('avg_depth Distribution')
+    plt.xlabel('avg_depth')
+    plt.ylabel('Frequency')
+    
+    # Calculate average
+    avg_depth = df['avg_depth'].mean()
+    
+    # Add average as text
+    plt.text(0.7, 0.9, 'Average: {:.2f}'.format(avg_depth), transform=plt.gca().transAxes)
+    
+    # Set y-axis to log scale if necessary
+    if df['avg_depth'].max() / df['avg_depth'].min() > 1000:
+        plt.yscale('log')
+    
+    plt.show()
+
+def filter_fm_segments(df, whitelist):
+    """
+    This function filters numeric columns based on a whitelist and then appends non-numeric columns back.
+    
+    Parameters:
+    df (pandas.DataFrame): The DataFrame to filter.
+    whitelist (pandas.DataFrame): The whitelist DataFrame. It should have a 'segment_id' column.
+    
+    Returns:
+    pandas.DataFrame: The filtered DataFrame.
+    """
+    # Get the intersection of the numeric columns and the whitelist
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    filtered_numeric_cols = numeric_cols.intersection(whitelist['segment_id'])
+
+    # Get the non-numeric columns
+    non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns
+
+    # Combine the filtered numeric columns and the non-numeric columns
+    filtered_cols = filtered_numeric_cols.union(non_numeric_cols)
+
+    return df[filtered_cols]
+
+def read_shap_annot(file, whitelist):
+    shap_annot_df = pd.read_csv(file, index_col = 0)
+    shap_annot_df.drop("gene_symbol", axis=1, inplace=True)
+    shap_annot_df.rename(columns={"annotated_genes": "gene_symbol"}, inplace=True)
+    shap_annot_df['segment_id'] = shap_annot_df['seqnames'].astype(str) + ':' + shap_annot_df['start'].astype(str) + '-' + shap_annot_df['end'].astype(str)
+    shap_annot_df_whitelist = shap_annot_df[shap_annot_df["gene_symbol"].isin(whitelist["gene_symbol"])]
+    return shap_annot_df, shap_annot_df_whitelist
 
 def assert_column(df, column_name, df_name=''):
         assert column_name in df.columns, f"'{column_name}' column is missing in {df_name}"
@@ -161,13 +232,19 @@ def create_fm_wgbs(df, metadata):
 
     processed_df = processed_df.merge(metadata[["sample_id_adj", "source_directory", "Group", "tumor_type"]], on = "sample_id_adj", how = "left")
     
+    # Sort by 'sample_id_adj' and 'source_directory'
+    processed_df = processed_df.sort_values(by=['tumor_type', 'sample_id_adj'])
+
+    # Reset the index and drop the old index
+    processed_df.reset_index(drop=True, inplace=True)
+
     return processed_df
 
-def find_annot_overlap(df, annot):
+def find_annot_overlap(df, annot, gene_column = "gene_symbol"):
 
     dataframes = {
         'df': ['segment_id'],
-        'annot': ['segment_id', 'gene_symbol']
+        'annot': ['segment_id', gene_column]
     }
 
     for df_name, columns in dataframes.items():
@@ -199,7 +276,7 @@ def find_annot_overlap(df, annot):
     overlapping_segments_df['segment_id'] = overlapping_segments_df['Chromosome'].astype(str) + ':' + overlapping_segments_df['Start_b'].astype(str) + '-' + overlapping_segments_df['End_b'].astype(str)
 
     # Merge with gene_bodies_105 to add gene symbols
-    overlapping_segments_df = overlapping_segments_df.merge(annot[["segment_id", "gene_symbol"]], on='segment_id', how='left').drop_duplicates()
+    overlapping_segments_df = overlapping_segments_df.merge(annot[["segment_id", gene_column]], on='segment_id', how='left').drop_duplicates()
 
     # Add a column for the length of the overlap
     overlapping_segments_df['overlap_length'] = overlapping_segments_df['End_b'] - overlapping_segments_df['Start_b']
@@ -209,7 +286,7 @@ def find_annot_overlap(df, annot):
 
     overlapping_segments_df['segment_id'] = overlapping_segments_df['Chromosome'].astype(str) + ':' + overlapping_segments_df['Start'].astype(str) + '-' + overlapping_segments_df['End'].astype(str)
 
-    df_annot = df.merge(overlapping_segments_df[["segment_id", "gene_symbol"]], on = "segment_id", how = "left").drop_duplicates()
+    df_annot = df.merge(overlapping_segments_df[["segment_id", gene_column]], on = "segment_id", how = "left").drop_duplicates()
 
     # Remove duplicate segment_ids
     df_annot = df_annot.drop_duplicates(subset='segment_id')
@@ -252,10 +329,10 @@ def pca_plot(df, n_components=2, color_column=None, marker_column=None, set_colu
         principalDf["label"] = principalDf["label"] + " (" + df[set_column] + ")"
 
     # Create a scatter plot
-    fig = plt.figure(figsize = (8,8))
+    fig = plt.figure(figsize = (6,6))
     ax = fig.add_subplot(1,1,1) 
-    ax.set_xlabel('Principal Component 1, Explained variance: {:.2%}'.format(pca.explained_variance_ratio_[0]), fontsize = 15)
-    ax.set_ylabel('Principal Component 2, Explained variance: {:.2%}'.format(pca.explained_variance_ratio_[1]), fontsize = 15)
+    ax.set_xlabel('PC1, Explained variance: {:.2%}'.format(pca.explained_variance_ratio_[0]), fontsize = 15)
+    ax.set_ylabel('PC2, Explained variance: {:.2%}'.format(pca.explained_variance_ratio_[1]), fontsize = 15)
     ax.set_title('2 component PCA', fontsize = 20)
 
     texts = []  # list to store the labels
@@ -372,7 +449,7 @@ def plot_correlation_distribution(correlations_df, title='Distribution of Correl
 
     plt.show()
 
-def process_wgbs_seg_files(folder):
+def process_wgbs_seg_files(seg_folder, cov_folder = None, convert_to_m_values=False):
     """
     Function to process .tsv files in a folder and save the result to a .csv file.
 
@@ -381,7 +458,7 @@ def process_wgbs_seg_files(folder):
     output_file (str): The path to the output .csv file.
     """
     # Find all .tsv files in the folder
-    file_paths = glob.glob(folder + '/**/*.tsv', recursive=True)
+    file_paths = glob.glob(seg_folder + '/**/*.tsv', recursive=True)
 
     # Read each file into a DataFrame and append it to the list, skipping empty files
     dfs = []
@@ -398,11 +475,57 @@ def process_wgbs_seg_files(folder):
     df_concat = pd.concat(dfs, ignore_index=True)
 
     # Rename columns with multiple periods to the substring before the first period
-    df_concat = df_concat.rename(columns=lambda x: x.split('.')[0] if '.' in x else x)
+    df_concat = df_concat.rename(columns=lambda x: x.replace('.sorted', ''))
 
     df_concat["segment_id"] = df_concat["chr"].astype(str) + ":" + df_concat["start"].astype(str) + "-" + df_concat["end"].astype(str)
 
     df_concat = df_concat.rename(columns={'chr': 'chrom'})
+
+    df_concat = df_concat.drop(columns=['chrom', 'start', 'end', 'startCpG', 'endCpG'], errors='ignore')
+
+    df_concat.dropna(inplace=True)
+
+    cols = ['segment_id'] + [col for col in df_concat if col != 'segment_id']
+    df_concat = df_concat[cols]
+
+    cov_df = pd.DataFrame(df_concat["segment_id"].copy())
+
+    if convert_to_m_values:
+        # Identify numeric columns
+        beta_cols = df_concat.select_dtypes(include=[np.number]).columns.tolist()
+
+        # Convert beta values to M-values
+        for col in beta_cols:
+            epsilon = 0.01
+            df_concat[col] = np.log2((df_concat[col]+epsilon) / (1 - df_concat[col]+epsilon))
+
+    if cov_folder:
+        # Get the list of sample folders
+        sample_folders = [f.path for f in os.scandir(cov_folder) if f.is_dir()]
+
+        for sample_folder in sample_folders:
+            # Get the list of bed files in the sample folder
+            bed_files = glob.glob(sample_folder + '/**/*.bed.gz', recursive=True)
+
+            bed_dfs = []
+            for bed_file in bed_files:
+                df = pd.read_csv(bed_file, sep='\t', compression='gzip', header=None, usecols=[0, 1, 2, 4])
+                df['segment_id'] = df[0].astype(str) + ":" + df[1].astype(str) + "-" + df[2].astype(str)
+                sample_name = os.path.basename(sample_folder)
+                df = df.rename(columns={4: f'{sample_name}_depth'})
+                df = df[['segment_id', f'{sample_name}_depth']]
+                bed_dfs.append(df)
+
+            # Concatenate all bed DataFrames vertically
+            bed_df_concat = pd.concat(bed_dfs, ignore_index=True)
+
+            cov_df = cov_df.merge(bed_df_concat, on='segment_id', how='left')
+
+        cov_df["avg_depth"] = cov_df.iloc[:, 1:].mean(axis=1)
+
+        plot_depth_distribution(cov_df)
+
+        return df_concat, cov_df
 
     return df_concat
 
@@ -439,54 +562,66 @@ def process_wgbs_dmr_files(folder):
 
     return df_concat
 
-def filter_dmr(X_train_df, X_test_df, groups_train, test = 'ttest', p_value_threshold=0.05):
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=RuntimeWarning)
+def filter_dmr(X_train_df, X_test_df, groups_train, test = 'ttest', p_value_threshold=0.05, diff_threshold=0.1):
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
 
-        # Keep a copy of the column names
-        column_names = X_train_df.columns
+    # Keep a copy of the column names
+    column_names = X_train_df.columns
 
-        # Convert the data to numpy arrays for faster computation
-        X_train = X_train_df.values
-        X_test = X_test_df.values
-        groups_train = groups_train.values
+    # Convert the data to numpy arrays for faster computation
+    X_train = X_train_df.values
+    X_test = X_test_df.values
+    groups_train = groups_train.values
 
-        # Get the indices of the 'R' and 'S' groups
-        R_indices = np.where(groups_train == 'R')[0]
-        S_indices = np.where(groups_train == 'S')[0]
+    # Get the indices of the 'R' and 'S' groups
+    R_indices = np.where(groups_train == 'R')[0]
+    S_indices = np.where(groups_train == 'S')[0]
 
-        # Split the data into the 'R' and 'S' groups
-        R_data = X_train[R_indices]
-        S_data = X_train[S_indices]
+    # Split the data into the 'R' and 'S' groups
+    R_data = X_train[R_indices]
+    S_data = X_train[S_indices]
 
-        # Calculate the test statistic and p-value for all columns at once
-        if test == 'ttest':
-            test_statistic, p_values = ttest_ind(R_data, S_data, axis=0, nan_policy='omit')
-        elif test == 'kruskal':
-            p_values = np.empty(X_train.shape[1])
-            for i in range(X_train.shape[1]):
-                _, p_values[i] = kruskal(R_data[:, i], S_data[:, i], nan_policy='omit')
-        else:
-            raise ValueError("Invalid test. Only 'ttest' and 'kruskal' are supported.")
+    # Calculate the test statistic and p-value for all columns at once
+    p_values = np.empty(X_train.shape[1])
+    if test == 'ttest':
+        test_statistic, p_values = ttest_ind(R_data, S_data, axis=0, nan_policy='omit')
+        # for i in range(X_train.shape[1]):
+        #     if len(np.unique(R_data[:, i])) > 1 or len(np.unique(S_data[:, i])) > 1:
+        #         _, p_values[i] = ttest_ind(R_data[:, i], S_data[:, i], nan_policy='omit')
+        #     else:
+        #         p_values[i] = np.nan
+    elif test == 'kruskal':
+        test_statistic, p_values = kruskal(R_data, S_data, axis=0, nan_policy='omit')
+        # for i in range(X_train.shape[1]):
+        #     if len(np.unique(R_data[:, i])) > 1 or len(np.unique(S_data[:, i])) > 1:
+        #         _, p_values[i] = kruskal(R_data[:, i], S_data[:, i], nan_policy='omit')
+        #     else:
+        #         p_values[i] = np.nan
+    else:
+        raise ValueError("Invalid test. Only 'ttest' and 'kruskal' are supported.")
 
-        # Correct for multiple testing
-        corrected_p_values = multipletests(p_values, method='fdr_bh')[1]
+    # Correct for multiple testing
+    corrected_p_values = multipletests(p_values, method='fdr_bh')[1]
 
-        # Create a DataFrame with the p-values
-        dmr_results = pd.DataFrame({
-            'segment_id': column_names,
-            'q_value': corrected_p_values,
-            'p_value': p_values
-        })
+    # Calculate the mean difference
+    mean_diff = np.abs(R_data.mean(axis=0) - S_data.mean(axis=0))
 
-        # Filter the DataFrame based on the p-value threshold
-        filtered_dmr = dmr_results[dmr_results['p_value'] <= p_value_threshold]
+    # Create a DataFrame with the p-values and mean differences
+    dmr_results = pd.DataFrame({
+        'segment_id': column_names,
+        'q_value': corrected_p_values,
+        'p_value': p_values,
+        'mean_diff': mean_diff
+    }).sort_values(by = "p_value")
 
-        # Keep only the columns in X_test and X_train that are in filtered_dmr
-        X_test_filtered = X_test_df.filter(filtered_dmr['segment_id'])
-        X_train_filtered = X_train_df.filter(filtered_dmr['segment_id'])
+    # Filter the DataFrame based on the p-value threshold and mean difference
+    filtered_dmr = dmr_results[(dmr_results['p_value'] <= p_value_threshold) & (dmr_results['mean_diff'] >= diff_threshold)]
 
-    return X_train_filtered, X_test_filtered, filtered_dmr
+    # Keep only the columns in X_test and X_train that are in filtered_dmr
+    X_test_filtered = X_test_df.filter(filtered_dmr['segment_id'])
+    X_train_filtered = X_train_df.filter(filtered_dmr['segment_id'])
+
+    return X_train_filtered, X_test_filtered, filtered_dmr, dmr_results
 
 def plot_roc_curve(y_test, y_pred_proba):
     
@@ -513,10 +648,25 @@ def split(X, y, test_size):
 
     return X_train, X_test, y_train, y_test, train_indices, test_indices
 
-def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, test_indices=None, reg = False, dmr = None, oversamp = None):
+def train_and_predict_single(meth_seg_fm, 
+                             test_size = 0.25, 
+                             train_indices=None, 
+                             test_indices=None, 
+                             reg = False, 
+                             dmr = None, 
+                             perform_pca = False, 
+                             n_components = 2, 
+                             model_str = "lr", 
+                             p_value_threshold = 0.05,
+                             diff_threshold = 0.1):
     # Initialize the encoder and scaler
     encoder = LabelEncoder()
     scaler = StandardScaler()
+
+    if model_str in ["lr"]:
+        model_type = "linear"
+    elif model_str in ["rf", "dt"]:
+        model_type = "tree"
 
     X = meth_seg_fm.select_dtypes(exclude=['object'])
     y = meth_seg_fm["Group"]
@@ -539,10 +689,35 @@ def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, 
     X_features_current = X_features_prev
 
     if dmr:
-        X_train, X_test, filtered_dmr = filter_dmr(X_train, X_test, groups_train, dmr)
+        X_train, X_test, filtered_dmr, dmr_results = filter_dmr(X_train, X_test, groups_train, dmr, p_value_threshold=p_value_threshold, diff_threshold=diff_threshold)
         X_features_prev = X_features_current
         X_features_current = X_train.columns
         print(f"DMR has removed {len(X_features_prev)-len(X_features_current)} features of the original {len(X_features_prev)}.")
+
+        # Create a 1x2 grid for the plots
+        fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+
+        # Plot a histogram of the p-values
+        n, bins, patches = axs[0].hist(dmr_results['p_value'], bins=30)
+        for i in range(len(patches)):
+            if (bins[i] <= p_value_threshold):
+                patches[i].set_facecolor('red')
+        axs[0].set_title('Distribution of P-values')
+        axs[0].set_xlabel('P-value')
+        axs[0].set_ylabel('Frequency')
+
+        # Plot a histogram of the mean differences
+        n, bins, patches = axs[1].hist(dmr_results['mean_diff'], bins=30)
+        for i in range(len(patches)):
+            if (bins[i] <= diff_threshold):
+                patches[i].set_facecolor('red')
+        axs[1].set_title('Distribution of Mean Differences')
+        axs[1].set_xlabel('Mean Difference')
+        axs[1].set_ylabel('Frequency')
+
+        # Display the plots
+        plt.tight_layout()
+        plt.show()
 
     # Convert the target variable to numeric values
     y_train = encoder.fit_transform(y_train)
@@ -552,23 +727,34 @@ def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, 
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
 
+    # Perform PCA if specified
+    if perform_pca:
+        pca = PCA(n_components=n_components)
+        X_train = pca.fit_transform(X_train)
+        X_test = pca.transform(X_test)
+        X_features_current = [f'PC{i+1}' for i in range(n_components)]
+
     # Convert back to dataframes
     X_train = pd.DataFrame(X_train, columns=X_features_current)
     X_test = pd.DataFrame(X_test, columns=X_features_current)
 
     # Fit the logistic regression model
-    if reg:
-        model = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = 0.5, max_iter=10000)
-    else:
-        model = LogisticRegression()
+    if model_str == "rf":
+        model = RandomForestClassifier()
+    elif model_str == "dt":
+        model = DecisionTreeClassifier()
+    elif model_str == "lr":
+        if reg:
+            model = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = 0.5, max_iter=10000)
+        else:
+            model = LogisticRegression()
     
     model.fit(X_train, y_train)
 
-    # Assuming X is your feature matrix and model is your trained model
-    X_features_prev = X_features_current
-    X_features_current = X_features_current[model.coef_[0] != 0]
-
-    if reg:
+    if reg and model_type == "linear":
+        # Assuming X is your feature matrix and model is your trained model
+        X_features_prev = X_features_current
+        X_features_current = X_features_current[model.coef_[0] != 0]
         print(f"Regularization has removed {len(X_features_prev)-len(X_features_current)} features of the original {len(X_features_prev)}.")
 
     # Get the probabilities
@@ -582,21 +768,36 @@ def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, 
 
     class_names = model.classes_
 
-    # Print the predicted labels and the true labels for each sample
-    for i in range(len(X_test)):
-        print("Sample:", i)
-        print("Cell line:", cell_lines_test.iloc[i])
-        print("True label:", f"{encoder.inverse_transform([y_test[i]])[0]} ({y_test[i]})")
-        print("Predicted label:", f"{encoder.inverse_transform([y_pred[i]])[0]} ({y_pred[i]})")
-        print("Probabilities:")
-        for j in range(len(class_names)):
-            print(f"{encoder.inverse_transform([class_names[j]])}: {y_pred_proba[i, j]}")
-        print()
+    print(f"Number of features remaining: {len(X_features_current)}")
 
-    explainer = shap.LinearExplainer(model, X_train)
+    # Create a DataFrame with the prediction probabilities for the positive class, predicted labels, and true labels
+    pred_df = pd.DataFrame({
+        'Prediction Probability': y_pred_proba[:, 1],
+        'Predicted Label': y_pred,
+        'True Label': y_test
+    })
+
+    accuracies = (y_pred == y_test).astype(int)
+
+    pred_df['True Label'] = pred_df['True Label'].apply(lambda x: str(x))
+
+    # Convert accuracies to a pandas Series
+    accuracies_series = pd.Series(accuracies)
+
+    # Map 1 to 'Correct' and 0 to 'Incorrect'
+    pred_df['Correct Prediction'] = accuracies_series.map({1: 'Correct', 0: 'Incorrect'})
+    pred_df['Sample'] = meth_seg_fm.loc[test_indices, "sample_id_adj"].values
+
+    labels_dict = {0: encoder.inverse_transform([0])[0], 1: encoder.inverse_transform([1])[0]}
+
+    # Plot the prediction probability distribution
+    plot_prediction_probability(pred_df, labels_dict)
+
+    if model_type == "tree":
+        explainer = shap.TreeExplainer(model)
+    elif model_type == "linear":
+        explainer = shap.LinearExplainer(model, X_train)
     shap_values = explainer.shap_values(X_test)
-
-    shap.summary_plot(shap_values, X_test, feature_names = X_test.columns, show=False)
 
     if dmr or reg:
         # Use loc instead of iloc
@@ -618,17 +819,106 @@ def train_and_predict_single(meth_seg_fm, test_size = 0.25, train_indices=None, 
         pca_plot(retained_features_fm, color_column = "Group", marker_column = "tumor_type", set_column = "set", label_column = "sample_id_adj", colors = ["r", "g"], markers = markers)
 
     # Get the feature importances
-    coeff = model.coef_[0]
+    if model_type == "tree":
+        importances = model.feature_importances_
+    elif model_type == "linear":
+        importances = model.coef_[0]
+    
+    if perform_pca:
+        importances_df = pd.DataFrame({'Feature': X_features_current, 'Importances': importances})
+    else:
+        # Create a DataFrame with the feature names and their corresponding importances
+        importances_df = pd.DataFrame({'Feature': X_features_prev, 'Importances': importances})
 
-    # Create a DataFrame with the feature names and their corresponding importances
-    coeff_df = pd.DataFrame({'Feature': X_features_prev, 'Coefficients': coeff})
+    # Filter the coefficients to remove zero values
+    non_zero_coeff = importances[importances != 0]
 
-    return model, X_train, X_test, coeff_df, explainer, shap_values
+    # Plot a histogram of the non-zero coefficients
+    # Adjust the figure size
+    plt.figure(figsize=(5, 5))
+    plt.hist(non_zero_coeff, bins=30)
+    plt.title('Distribution of Non-Zero Coefficients')
+    plt.xlabel('Coefficient Value')
+    plt.ylabel('Frequency')
+    plt.show()
 
-def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
+    # Create a SHAP summary plot
+    shap.summary_plot(shap_values, X_test, feature_names = X_test.columns, show=False, plot_size = [7, 4])
+
+    return model, X_train, X_test, importances_df, explainer, shap_values
+
+def plot_prediction_probability(pred_df, labels_dict = None):
+    """
+    Function to create a scatter plot with samples on the x-axis and probabilities on the y-axis.
+    Points are colored based on whether the prediction was correct or not.
+
+    Parameters:
+    pred_df (pandas.DataFrame): DataFrame containing the prediction probabilities and whether the prediction was correct.
+
+    Returns:
+    None
+    """
+
+    # Create a figure and axes
+    fig, ax = plt.subplots()
+
+    # Define a color dictionary for the hue parameter
+    color_dict = {'Correct': 'blue', 'Incorrect': 'orange'}
+
+    # Create a scatter plot with samples on the x-axis and probabilities on the y-axis
+    # Color the points based on whether the prediction was correct or not
+    scatter = sns.scatterplot(data=pred_df, x='Sample', y='Prediction Probability', hue='Correct Prediction', palette=color_dict, ax=ax, legend = False)
+
+    # Add a horizontal dashed line at y=0.5
+    ax.axhline(0.5, color='red', linestyle='--')
+
+    # Set the y-axis limits
+    ax.set_ylim(0, 1)
+
+    # Set the title and labels
+    ax.set_title('Prediction Probability Distribution')
+    ax.set_xlabel('Sample')
+    ax.set_ylabel('Prediction Probability')
+
+    # Color the background of the plot based on whether they are above or below 0
+    ax.axhspan(0.5, 1, facecolor='green', alpha=0.1)
+    ax.axhspan(0, 0.5, facecolor='red', alpha=0.1)
+
+    # Get the handles and labels from seaborn
+    handles, labels = scatter.get_legend_handles_labels()
+
+    # Create custom patches for labels if labels_dict is provided
+    if labels_dict:
+        red_patch = mpatches.Patch(color='red', alpha=0.1, label=labels_dict[0])
+        green_patch = mpatches.Patch(color='green', alpha=0.1, label=labels_dict[1])
+        handles.extend([red_patch, green_patch])
+        labels.extend([labels_dict[0], labels_dict[1]])
+
+    # Create custom Line2D objects for the legend
+    blue_dot = Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10)
+    orange_dot = Line2D([0], [0], marker='o', color='w', markerfacecolor='orange', markersize=10)
+
+    # Add the Line2D objects to the handles list
+    handles.extend([blue_dot, orange_dot])
+
+    # Add the labels to the labels list
+    labels.extend(['Correct', 'Incorrect'])
+
+    # Create the legend
+    plt.legend(handles=handles, labels=labels, loc="upper left", bbox_to_anchor=(1,1))
+
+    # Rotate the feature names and give them more space
+    plt.xticks(rotation=45, ha='right')
+
+    # Show the plot
+    plt.show()
+
+def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold = 0.1):
     # Initialize the encoder, scaler and classifier
     encoder = LabelEncoder()
     scaler = StandardScaler()
+
+    shap_values_list = []
 
     X = meth_seg_fm.select_dtypes(exclude=['object'])
     y = meth_seg_fm["Group"]
@@ -645,12 +935,22 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
     # Initialize the dictionary
     shap_dict = {col: [0, 0, []] for col in X.columns}
 
+    # Initialize the dictionary to store coefficients
+    coef_dict = {col: [] for col in X.columns}
+
+    y_true_list = []
+    y_pred_list = []
+    # Initialize lists to store prediction probabilities
+    y_pred_proba_list = []
+
+    fold = 1
+
     for train_index, test_index in loo.split(X):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
         if dmr:
             groups_train = meth_seg_fm["Group"].iloc[train_index]
-            X_train, X_test, filtered_dmr = filter_dmr(X_train, X_test, groups_train, dmr)
+            X_train, X_test, filtered_dmr, dmr_results = filter_dmr(X_train, X_test, groups_train, dmr, diff_threshold = 0.1)
         X_features_current = X_train.columns
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
@@ -661,10 +961,26 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
         y_test = encoder.transform(y_test)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
+        # Store the prediction probabilities
+        y_pred_proba = clf.predict_proba(X_test)
         accuracies.append(accuracy_score(y_test, y_pred))
         # Create a SHAP explainer and calculate SHAP values
         explainer = shap.Explainer(clf, X_train)
         shap_values = explainer(X_test)
+
+        y_true_list.append(y_test)
+        y_pred_list.append(y_pred)
+        y_pred_proba_list.append(y_pred_proba[0][1])
+
+        # Store the coefficients
+        for i, col in enumerate(X_features_current):
+            coef_dict[col].append(clf.coef_[0][i])
+
+        # Count the number of non-zero coefficients
+        non_zero_coef_count = np.count_nonzero(clf.coef_)
+
+        print(f'Fold {fold}: Number of non-zero coefficients: {non_zero_coef_count}')
+        fold += 1
 
         # Update the dictionary with the new SHAP values
         for i, col in enumerate(X_features_current):
@@ -680,6 +996,8 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
         shap_dict[col][0] /= len(accuracies)
         shap_dict[col][1] /= len(accuracies)
         shap_dict[col][2] = np.var(shap_dict[col][2])
+
+    labels_dict = {0: encoder.inverse_transform([0])[0], 1: encoder.inverse_transform([1])[0]}
 
     # Convert the dictionary to a DataFrame
     shap_df = pd.DataFrame.from_dict(shap_dict, orient='index', columns=['average_shap_value', 'reliability_shap_value', 'shap_variance'])
@@ -719,6 +1037,87 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None):
     shap_df["direction"] = np.where(shap_df["diff"] > 0, "M", "U")
 
     print(f"Average accuracy: {np.mean(accuracies)}")
+
+    # Create a DataFrame from the coefficient dictionary
+    coef_df_ori = pd.DataFrame.from_dict(coef_dict, orient='index').dropna(how = 'all')
+    coef_df = coef_df_ori.copy()
+    coef_df - coef_df
+
+    # Calculate the absolute mean of the coefficients for each feature
+    coef_df['abs_mean'] = coef_df_ori.abs().mean(axis=1)
+
+    # Calculate the mean of the coefficients for each feature
+    coef_df['mean_coef'] = coef_df_ori.mean(axis=1)
+
+    # Reset the index to add the feature names as a column
+    coef_df.reset_index(inplace=True)
+
+    # Rename the new column
+    coef_df.rename(columns={'index': 'segment_id'}, inplace=True)
+
+    # Merge the average coefficient dataframe into shap_df
+    shap_df = pd.merge(shap_df, coef_df[['segment_id', 'mean_coef']], on="segment_id", how="left")
+
+    # Get the top 10 features
+    top_10_features = coef_df_ori.abs().mean(axis = 1).nlargest(10).index
+
+    # Create a new DataFrame with only the top 10 features
+    top_10_coef_df = coef_df_ori.loc[top_10_features].T
+
+    # Create a figure and axis for the boxplot
+    plt.figure(figsize=(6, 4))
+
+    # Create a list of colors based on the mean of each feature
+    colors = ['green' if mean > 0 else 'red' for mean in top_10_coef_df.mean()]
+
+    # Create boxplots for the top 10 features
+    sns.boxplot(data=top_10_coef_df, palette=colors)
+
+    plt.axhline(0, color='black', linestyle='--')
+
+    # Set the title and labels
+    plt.title('Coefficient Boxplots for Top 10 Features')
+    plt.xlabel('Features')
+    plt.ylabel('Coefficient Values')
+
+    # Create custom patches for the legend
+    red_patch = mpatches.Patch(color='red', label=labels_dict[0])
+    green_patch = mpatches.Patch(color='green', label=labels_dict[1])
+
+    # Add the legend
+    plt.legend(handles=[red_patch, green_patch], loc="upper left", bbox_to_anchor=(1,1))
+
+    # Rotate the feature names and give them more space
+    plt.xticks(rotation=45, ha='right')
+
+    # Show the plot
+    plt.show()
+
+    # Create a DataFrame with the prediction probabilities, predicted labels, and true labels
+    pred_df = pd.DataFrame({
+        'Prediction Probability': y_pred_proba_list,
+        'Predicted Label': y_pred_list,
+        'True Label': y_true_list
+    })
+
+    pred_df['True Label'] = pred_df['True Label'].apply(lambda x: str(x))
+
+    # Convert accuracies to a pandas Series
+    accuracies_series = pd.Series(accuracies)
+
+    # Map 1 to 'Correct' and 0 to 'Incorrect'
+    pred_df['Correct Prediction'] = accuracies_series.map({1: 'Correct', 0: 'Incorrect'})
+    pred_df['Sample'] = meth_seg_fm["sample_id_adj"].values
+
+    plot_prediction_probability(pred_df, labels_dict)
+
+    # Add a plot for the distribution of 'z_score'
+    plt.figure(figsize=(6, 4))
+    plt.hist(shap_df['z_score'], bins=30, alpha=0.5, color='b')
+    plt.title('z_score Distribution')
+    plt.xlabel('z_score')
+    plt.ylabel('Frequency')
+    plt.show()
 
     return shap_df
 

@@ -12,6 +12,8 @@ library(ggplot2)
 library(gridExtra)
 
 output_dir <- "/data/lvisser/post_analysis"
+
+whitelist <- read.csv("/data/lvisser/ferroptosis_gene_whitelists/complete_gene_list_no_duplicates_cleaned.txt", header = FALSE)
 ```
 
 ```{r}
@@ -48,18 +50,33 @@ head(reg.obj)
 ```
 
 ```{r}
-head(reg.obj)
-```
-
-```{r}
-annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
+annotate_regions <- function(df, whitelist_df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
   # Separate hypermethylated and hypomethylated regions
   df_hyper <- df[df$direction == "M",]
   df_hypo <- df[df$direction == "U",]
 
+  # Keep only one row for each segment_id
+  whitelist_df <- dplyr::distinct(whitelist_df, segment_id, .keep_all = TRUE)
+
+  # Get the unique segment_ids in df and whitelist_df
+  unique_segment_ids_df <- unique(df$segment_id)
+  unique_segment_ids_whitelist_df <- unique(whitelist_df$segment_id)
+
+  # Get the number of unique segment_ids in df that are also in whitelist_df
+  num_overlap <- sum(unique_segment_ids_df %in% unique_segment_ids_whitelist_df)
+
+  # Calculate the percentage
+  percent_overlap <- round(num_overlap / length(unique_segment_ids_df) * 100, 2)
+  
+  whitelist_df_hyper <- whitelist_df[whitelist_df$direction == "M",]
+  whitelist_df_hypo <- whitelist_df[whitelist_df$direction == "U",]
+
   # Calculate percentages
   percent_hyper <- round(nrow(df_hyper) / nrow(df) * 100, 2)
   percent_hypo <- round(nrow(df_hypo) / nrow(df) * 100, 2)
+
+  percent_hyper_whitelist <- round(nrow(whitelist_df_hyper) / nrow(whitelist_df) * 100, 2)
+  percent_hypo_whitelist <- round(nrow(whitelist_df_hypo) / nrow(whitelist_df) * 100, 2)
 
   # Annotate regions for both hypermethylated and hypomethylated
   geneDMRann_hyper <- annotateWithGeneParts(as(df_hyper,"GRanges"),gene.obj)
@@ -72,21 +89,43 @@ annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
     cgi.obj$CpGi,cgi.obj$shores,
     feature.name="CpGi",flank.name="shores")
 
+  addOtherCategory <- function(annotated_obj) {
+    annotated_obj@annotation["other"] <- 100 - sum(annotated_obj@precedence)
+    annotated_obj@precedence["other"] <- 100 - sum(annotated_obj@precedence)
+    annotated_obj@num.annotation["other"] <- Inf
+    annotated_obj@num.precedence["other"] <- Inf
+    return(annotated_obj)
+  }
+
   regDMRann_hyper <- annotateWithFeatures(as(df_hyper,"GRanges"),reg.obj)
   regDMRann_hypo <- annotateWithFeatures(as(df_hypo,"GRanges"),reg.obj)
+  regDMRann_hyper <- addOtherCategory(regDMRann_hyper)
+  regDMRann_hypo <- addOtherCategory(regDMRann_hypo)
 
-  # Add "other" category to the annotation slot
-  regDMRann_hyper@annotation["other"] <- 100-sum(regDMRann_hyper@precedence)
-  regDMRann_hypo@annotation["other"] <- 100-sum(regDMRann_hypo@precedence)
+  # Define the minimum number of rows
+  min_rows <- 3
 
-  regDMRann_hyper@precedence["other"] <- 100-sum(regDMRann_hyper@precedence)
-  regDMRann_hypo@precedence["other"] <- 100-sum(regDMRann_hypo@precedence)
+  # Filter the data frames
+  if (nrow(whitelist_df_hyper) >= min_rows) {
+    geneDMRann_hyper_whitelist <- annotateWithGeneParts(as(whitelist_df_hyper,"GRanges"), gene.obj)
+    
+    cgiDMRann_hyper_whitelist <- annotateWithFeatureFlank(as(whitelist_df_hyper,"GRanges"), cgi.obj$CpGi,cgi.obj$shores, feature.name="CpGi",flank.name="shores")
+    
+    regDMRann_hyper_whitelist <- annotateWithFeatures(as(whitelist_df_hyper,"GRanges"),reg.obj)
+  
+    regDMRann_hyper_whitelist <- addOtherCategory(regDMRann_hyper_whitelist)
+  }
 
-  regDMRann_hyper@num.annotation["other"] <- Inf
-  regDMRann_hypo@num.annotation["other"] <- Inf
+  # Only run hypo if whitelist_df_hypo has enough rows
+  if (nrow(whitelist_df_hypo) >= min_rows) {
+    geneDMRann_hypo_whitelist <- annotateWithGeneParts(as(whitelist_df_hypo,"GRanges"), gene.obj)
 
-  regDMRann_hyper@num.precedence["other"] <- Inf
-  regDMRann_hypo@num.precedence["other"] <- Inf
+    cgiDMRann_hypo_whitelist <- annotateWithFeatureFlank(as(whitelist_df_hypo,"GRanges"), cgi.obj$CpGi,cgi.obj$shores, feature.name="CpGi",flank.name="shores")
+
+    regDMRann_hypo_whitelist <- annotateWithFeatures(as(whitelist_df_hypo,"GRanges"),reg.obj)
+
+    regDMRann_hypo_whitelist <- addOtherCategory(regDMRann_hypo_whitelist)
+  }
 
   # Define the output file names
   output_file_gene <- paste0(output_dir, "/geneDMRann_piechart_", name, ".png")
@@ -97,31 +136,55 @@ annotate_regions <- function(df, output_dir, name, gene.obj, cgi.obj, reg.obj) {
   width <- 800
   height <- 600
 
-  # Plot for both hypermethylated and hypomethylated regions
+  # Adjust the margins of the plots
+  par(mar = c(2, 2, 2, 2), oma = c(0, 0, 0, 0))
+
+  # Add the subplots to the existing plots
   png(output_file_gene, width = width, height = height)
-  par(mfrow = c(1, 2))
-  genomation::plotTargetAnnotation(geneDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
-  genomation::plotTargetAnnotation(geneDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  par(mfrow = c(2, 2))
+  genomation::plotTargetAnnotation(geneDMRann_hyper, main = paste("Hypermethylated (R vs S) - All -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(geneDMRann_hypo, main = paste("Hypomethylated (R vs S) - All - ", percent_hypo, "%"))
+  if (nrow(whitelist_df_hyper) >= min_rows) {
+    genomation::plotTargetAnnotation(geneDMRann_hyper_whitelist, main = paste("Hypermethylated (R vs S) - FRGs -", percent_hyper_whitelist, "%"))
+  }
+  if (nrow(whitelist_df_hypo) >= min_rows) {
+    genomation::plotTargetAnnotation(geneDMRann_hypo_whitelist, main = paste("Hypomethylated (R vs S) - FRGs -", percent_hypo_whitelist, "%"))
+  }
+  mtext(paste("Percentage of all segments annotated with at least one FRG: ", percent_overlap, "%"), side = 1, line = -2, outer = TRUE)
   dev.off()
 
+  # Add the subplots to the existing plots
   png(output_file_cgi, width = width, height = height)
-  par(mfrow = c(1, 2))
-  genomation::plotTargetAnnotation(cgiDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
-  genomation::plotTargetAnnotation(cgiDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  par(mfrow = c(2, 2))
+  genomation::plotTargetAnnotation(cgiDMRann_hyper, main = paste("Hypermethylated (R vs S) - All -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(cgiDMRann_hypo, main = paste("Hypomethylated (R vs S) - All -", percent_hypo, "%"))
+  if (nrow(whitelist_df_hyper) >= min_rows) {
+    genomation::plotTargetAnnotation(cgiDMRann_hyper_whitelist, main = paste("Hypermethylated (R vs S) - FRGs -", percent_hyper_whitelist, "%"))
+  }
+  if (nrow(whitelist_df_hypo) >= min_rows) {
+    genomation::plotTargetAnnotation(cgiDMRann_hypo_whitelist, main = paste("Hypomethylated (R vs S) - FRGs -", percent_hypo_whitelist, "%"))
+  }
+  mtext(paste("Percentage of all segments annotated with at least one FRG: ", percent_overlap, "%"), side = 1, line = -2, outer = TRUE)
   dev.off()
 
-  # Plot target annotation with specified colors
   png(output_file_reg, width = width, height = height)
-  par(mfrow = c(1, 2))
-  genomation::plotTargetAnnotation(regDMRann_hyper, main = paste("Hypermethylated (R vs S) -", percent_hyper, "%"))
-  genomation::plotTargetAnnotation(regDMRann_hypo, main = paste("Hypomethylated (R vs S) -", percent_hypo, "%"))
+  par(mfrow = c(2, 2))
+  genomation::plotTargetAnnotation(regDMRann_hyper, main = paste("Hypermethylated (R vs S) - All -", percent_hyper, "%"))
+  genomation::plotTargetAnnotation(regDMRann_hypo, main = paste("Hypomethylated (R vs S) - All -", percent_hypo, "%"))
+  if (nrow(whitelist_df_hyper) >= min_rows) {
+    genomation::plotTargetAnnotation(regDMRann_hyper_whitelist, main = paste("Hypermethylated (R vs S) - FRGs -", percent_hyper_whitelist, "%"))
+  }
+  if (nrow(whitelist_df_hypo) >= min_rows) {
+    genomation::plotTargetAnnotation(regDMRann_hypo_whitelist, main = paste("Hypomethylated (R vs S) - FRGs -", percent_hypo_whitelist, "%"))
+  }
+  mtext(paste("Percentage of all segments annotated with at least one FRG: ", percent_overlap, "%"), side = 1, line = -2, outer = TRUE)
   dev.off()
 }
 ```
 
 ```{r}
 # R
-enrich_regions <- function(df, output_dir, name, dge_df) {
+enrich_regions <- function(df, output_dir, name, dge_df = NULL, whitelist) {
   res <- great(as(df,"GRanges"), "MSigDB:H", "txdb:hg38")
   
   # Define the output file names
@@ -152,12 +215,19 @@ enrich_regions <- function(df, output_dir, name, dge_df) {
   # Expand the DataFrame
   rg_df <- tidyr::unnest(rg_df, annotated_genes, dist_to_TSS)
 
-  rg_df <- merge(rg_df, dge_df, by.x = "annotated_genes", by.y = "name", all.x = TRUE)
-  
+  if (!is.null(dge_df)) {
+    rg_df <- merge(rg_df, dge_df, by.x = "annotated_genes", by.y = "name", all.x = TRUE)
+  }
+
+  # Filter rg_df based on the whitelist
+  rg_df_whitelist <- rg_df[rg_df$annotated_genes %in% whitelist[, 1],]
+
   # Write the data frame to a file
   write.csv(rg_df, file = region_gene_associations_file)
 
-  return(rg_df)
+  write.csv(rg_df_whitelist, file = paste0(output_dir, "/region_gene_associations_whitelist_", name, ".csv"))
+
+  return(list(rg_df = rg_df, rg_df_whitelist = rg_df_whitelist))
 }
 ```
 
@@ -274,7 +344,58 @@ create_karyogram <- function(gr, output_dir, name) {
 }
 ```
 
-## Roberto
+## Segments
+
+```{r}
+directories <- c("/data/lvisser/wgbs_tools/outputs/segmentations/MM_only",
+  "/data/lvisser/wgbs_tools/outputs/segmentations/NB_only", 
+  "/data/lvisser/wgbs_tools/outputs/segmentations/roberto_only",
+  "/data/lvisser/wgbs_tools/outputs/segmentations/NB_and_MM",
+  "/data/lvisser/wgbs_tools/outputs/segmentations/NB_and_roberto")
+
+# Initialize an empty list
+all_seg_data <- list()
+
+# R
+for (directory in directories) {
+  seg_files <- list.files(directory, pattern = "\\.tsv$", recursive = TRUE, full.names = TRUE)
+  print(seg_files)  # Print file paths
+  dir_seg_data <- NULL
+  # R
+  for (seg_file in seg_files) {
+    if (!file.exists(seg_file)) {
+      print(paste("File does not exist:", seg_file))
+      next
+    }
+    if (file.info(seg_file)$size == 0) {
+      print(paste("File is empty:", seg_file))
+      next
+    }
+    if (length(readLines(seg_file)) <= 1) {
+      print(paste("File only contains header:", seg_file))
+      next
+    }
+    seg_data <- readGeneric(seg_file, header = TRUE, keep.all.metadata = TRUE)
+    seg_data_df <- as.data.frame(seg_data)  # Convert to data frame
+    dir_seg_data <- rbind(dir_seg_data, seg_data_df)
+  }
+  # Add the dataframe to the list with the directory name as the key
+  # Remove rows with NA values
+  dir_seg_data <- na.omit(dir_seg_data)
+  all_seg_data[[directory]] <- dir_seg_data
+}
+```
+
+```{r}
+for (i in 1:length(all_seg_data)) {
+  name <- paste0(basename(directories[i]), "_seg")
+  output_dir_name <- paste0(output_dir, "/", name)
+  dir.create(output_dir_name, showWarnings = FALSE)
+  merged_df <- enrich_regions(as(all_seg_data[[i]],"GRanges"), output_dir_name, name)
+}
+```
+
+## DMR
 
 ```{r}
 directories <- c("/data/lvisser/wgbs_tools/outputs/dmr/MM_only",
@@ -305,6 +426,9 @@ for (directory in directories) {
     }
     bed_data <- readGeneric(bed_file, header = TRUE, keep.all.metadata = TRUE)
     bed_data_df <- as.data.frame(bed_data)  # Convert to data frame
+    # Add a segment_id column
+    bed_data_df <- mutate(bed_data_df, segment_id = paste0(seqnames, ":", start, "-", end))
+
     dir_bed_data <- rbind(dir_bed_data, bed_data_df)
   }
   # Add the dataframe to the list with the directory name as the key
@@ -317,12 +441,12 @@ dge_names <- c("R_S_MM", "R_S_NB", "R_Ss_sensSHY")
 merged_list <- list()
 
 for (i in 1:length(all_bed_data)) {
-  name <- basename(directories[i])
+  name <- paste0(basename(directories[i]), "_dmr")
   output_dir_name <- paste0(output_dir, "/", name)
   dir.create(output_dir_name, showWarnings = FALSE)
-  annotate_regions(all_bed_data[[i]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
-  merged_df <- enrich_regions(as(all_bed_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]])
-  merged_list[[name]] <- merged_df
+  merged_df_list <- enrich_regions(as(all_bed_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]], whitelist)
+  merged_list[[name]] <- merged_df_list[[1]]
+  annotate_regions(all_bed_data[[i]], merged_df_list[[2]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
   link_meth_to_dge(merged_list[[i]], output_dir_name, name)
   create_karyogram(merged_list[[i]], output_dir_name, name)
 }
@@ -336,7 +460,7 @@ read_shap_csv <- function(file_path) {
     filter(z_score >= 2)
 
   df <- df %>%
-    separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]")
+    separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]", remove = FALSE)
 
   return(df)
 }
@@ -364,9 +488,9 @@ for (i in 1:length(all_shap_data)) {
   name <- sub("\\.csv$", "", basename(files[i]))
   output_dir_name <- paste0(output_dir, "/", name)
   dir.create(output_dir_name, showWarnings = FALSE)
-  annotate_regions(all_shap_data[[i]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
-  merged_df <- enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]])
-  merged_list[[name]] <- merged_df
+  merged_df_list <- enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]], whitelist)
+  merged_list[[name]] <- merged_df_list[[1]]
+  annotate_regions(all_shap_data[[i]], merged_df_list[[2]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
   link_meth_to_dge(merged_list[[i]], output_dir_name, name)
   create_karyogram(merged_list[[i]], output_dir_name, name)
 }
