@@ -308,8 +308,7 @@ link_meth_to_dge <- function(merged_df, output_dir, name) {
       scale_fill_manual(values = values) +
       theme(axis.text.x = element_text(angle = 90)) +
       labs(title = paste0("Hyper-Upregulated\nUpstream + TSS: ", round(hyper_up_frac_upstream, 2), "\nDownstream: ", round(hyper_up_frac_downstream, 2)), x = "Distance from TSS", y = "Count")
-    
-    # Save the plots
+  
     png(output_file, width = 800, height = 600)
     grid.arrange(plot_hypo_up, plot_hypo_down, plot_hyper_down, plot_hyper_up, ncol = 2)
     dev.off()
@@ -321,9 +320,17 @@ link_meth_to_dge <- function(merged_df, output_dir, name) {
 ```
 
 ```{r}
-create_karyogram <- function(gr, output_dir, name) {
+create_karyogram <- function(gr, output_dir, name, weight_col = NULL) {
   # Add a new column for the color
   gr$color <- ifelse(gr$direction == "M", "red", "blue") 
+
+  # Add a new column for the alpha level based on the weight, if provided
+  if (!is.null(weight_col)) {
+    # Scale the weight column to the range [0,1]
+    gr$alpha <- scales::rescale(gr[[weight_col]], to = c(0, 1))
+    # Convert the color and alpha level to a single color specification
+    gr$color <- ifelse(gr$direction == "M", rgb(1, 0, 0, gr$alpha), rgb(0, 0, 1, gr$alpha))
+  }
 
   gr <- as(gr, "GRanges")
 
@@ -456,8 +463,7 @@ for (i in 1:length(all_bed_data)) {
 
 ```{r}
 read_shap_csv <- function(file_path) {
-  df <- read.csv(file_path) %>%
-    filter(z_score >= 2)
+  df <- read.csv(file_path)
 
   df <- df %>%
     separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]", remove = FALSE)
@@ -492,7 +498,7 @@ for (i in 1:length(all_shap_data)) {
   merged_list[[name]] <- merged_df_list[[1]]
   annotate_regions(all_shap_data[[i]], merged_df_list[[2]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
   link_meth_to_dge(merged_list[[i]], output_dir_name, name)
-  create_karyogram(merged_list[[i]], output_dir_name, name)
+  create_karyogram(merged_list[[i]], output_dir_name, name, "z_score")
 }
 ```
 

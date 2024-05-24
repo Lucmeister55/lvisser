@@ -45,7 +45,7 @@ import io
 import sklearn
 from sklearn.model_selection import train_test_split, cross_val_score, LeaveOneOut
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.linear_model import LogisticRegression, Lasso, ElasticNet
 from sklearn.feature_selection import SelectFromModel
 from sklearn.preprocessing import LabelEncoder
@@ -53,6 +53,166 @@ from sklearn.metrics import classification_report, accuracy_score, silhouette_sc
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.cluster import DBSCAN
+
+import matplotlib.ticker as mtick
+
+def plot_importance_kde(df, whitelist_df, column = 'z_score'):
+    # Plot the KDE of the original DataFrame
+    sns.kdeplot(df[column], label='Before Filtering')
+
+    # Create a new DataFrame that only includes the rows where the segment_id is in the whitelist
+    df_whitelist = df[df['segment_id'].isin(whitelist_df['segment_id'])]
+
+    # Plot the KDE of the whitelisted DataFrame
+    sns.kdeplot(df_whitelist[column], label='After Filtering')
+
+    # Set the labels
+    plt.xlabel('Importance Score')
+    plt.ylabel('Density')
+    plt.title('KDE of Importance Scores')
+
+    # Show the plot
+    plt.legend()
+    plt.show()
+
+def plot_features_importances_removed_histogram(df, whitelist_df, column = 'z_score'):
+    # Calculate the quantiles for the original DataFrame
+    df['quantile'], bin_edges = pd.qcut(df[column], q=10, retbins=True, labels=False)
+
+    # Create a new DataFrame that only includes the rows where the segment_id is in the whitelist
+    df_whitelist = df[df['segment_id'].isin(whitelist_df['segment_id'])]
+
+    # Calculate the counts for each quantile in the original and whitelisted DataFrames
+    total_counts = df['quantile'].value_counts().sort_index()
+    whitelist_counts = df_whitelist['quantile'].value_counts().sort_index()
+
+    # Calculate the percentages of removed features
+    percentages_removed = 1 - (whitelist_counts / total_counts)
+
+    # Create a bar plot
+    plt.bar(range(10), percentages_removed, width = 1, edgecolor="black")
+
+    # Set the labels
+    plt.xlabel('Percent Importance Intervals')
+    plt.ylabel('Percentage of Features Removed')
+    plt.xticks(range(10), [f'{i*10}-{(i+1)*10}%' for i in range(10)], rotation = 45)
+
+    # Format the y-axis to show percentages
+    plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+    # Show the plot
+    plt.show()
+
+    # Drop the 'quantile' column
+    df.drop(columns=['quantile'], inplace=True)
+
+def plot_venn_top_features(df1, df2, feature_col='segment_id', importance_col='z_score', top_n=100):
+    """
+    Function to plot a Venn diagram of the top features in two dataframes.
+
+    Parameters:
+    df1 (pandas.DataFrame): The first DataFrame.
+    df2 (pandas.DataFrame): The second DataFrame.
+    feature_col (str): The name of the column containing the features.
+    importance_col (str): The name of the column containing the importance scores.
+    top_n (int): The number of top features to consider.
+    """
+    # Get the top features in both dataframes
+    top_features_df1 = set(df1.nlargest(top_n, importance_col)[feature_col])
+    top_features_df2 = set(df2.nlargest(top_n, importance_col)[feature_col])
+
+    # Plot the Venn diagram
+    plt.figure(figsize=(8, 4))
+    venn2([top_features_df1, top_features_df2], set_labels = ('All', 'FRGs'))
+    plt.title('Venn Diagram of Top Features in both models')
+    plt.show()
+
+from sklearn.preprocessing import MaxAbsScaler
+
+def plot_overlap_importance(df1, df2, segment_id_col='segment_id', importance_col='z_score'):
+    """
+    Function to find the overlap between segments in two dataframes and plot their importance.
+
+    Parameters:
+    df1 (pandas.DataFrame): The first DataFrame.
+    df2 (pandas.DataFrame): The second DataFrame.
+    segment_id_col (str): The name of the column containing the segment IDs.
+    importance_col (str): The name of the column containing the importance scores.
+    """
+    # Find the overlap between segments in the two dataframes
+    overlap_df = pd.merge(df1, df2, on=segment_id_col, suffixes=('_df1', '_df2'))
+
+    # Initialize a MaxAbsScaler
+    scaler = MaxAbsScaler()
+
+    # Normalize the importance scores in both dataframes
+    overlap_df[[importance_col + '_df1', importance_col + '_df2']] = scaler.fit_transform(overlap_df[[importance_col + '_df1', importance_col + '_df2']])
+
+    # Plot the importance of overlapping segments in both datasets
+    plt.figure(figsize=(8, 4))
+    plt.scatter(overlap_df[importance_col + '_df1'], overlap_df[importance_col + '_df2'], alpha=0.6)
+    plt.xlabel('Scaled Importance in All')
+    plt.ylabel('Scaled Importance in FRGs')
+    plt.title('Scaled Importance of Overlapping Segments in both models')
+    plt.show()
+
+def plot_importance_and_regions(df, importance_col = "z_score"):
+    df["chrom"] = df["segment_id"].str.split(":").str[0]
+
+    # Calculate the average importance and count of regions for each chromosome
+    grouped = df.groupby('chrom')[importance_col].agg(['mean', 'count'])
+
+    # Create a list of all possible chromosomes
+    all_chromosomes = ['chr' + str(i) for i in range(1, 23)] + ['chrX', 'chrY', 'chrMT']
+
+    # Reindex the grouped DataFrame to include all chromosomes
+    grouped = grouped.reindex(all_chromosomes)
+
+    # Sort the index of the grouped dataframe
+    grouped.sort_index(key=lambda x: pd.to_numeric(x.str.extract('(\d+)', expand=False), errors='coerce'), inplace=True)
+
+    # Create a bar plot
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+
+    # Define the width of the bars and the positions of the x-coordinates
+    width = 0.35
+    x = np.arange(len(grouped.index))
+
+    # Plot the average importance
+    ax1.bar(x - width/2, grouped['mean'], width, label='Average Importance', alpha=0.6, color='b')
+
+    # Create a second y-axis for the count of regions
+    ax2 = ax1.twinx()
+    ax2.bar(x + width/2, grouped['count'], width, label='Number of Regions', alpha=0.6, color='r')
+
+    # Draw lines through the x ticks
+    for i in x:
+        ax1.axvline(i, color='gray', linestyle='--', linewidth=0.5)
+
+    # Set the labels and title
+    ax1.set_xlabel('Chromosome')
+    ax1.set_ylabel('Average Importance')
+    ax2.set_ylabel('Number of Regions')
+    plt.title('Average Importance and Number of Regions for Each Chromosome')
+
+    # Rotate the x-labels and set them manually
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(grouped.index, rotation=45, ha='right')
+
+    # Get the limits of the first y-axis
+    y1_min, y1_max = ax1.get_ylim()
+
+    # Calculate the corresponding limits for the second y-axis
+    y2_min = y1_min * grouped['count'].max() / grouped['mean'].max()
+    y2_max = y1_max * grouped['count'].max() / grouped['mean'].max()
+
+    # Set the limits of the second y-axis
+    ax2.set_ylim(y2_min, y2_max)
+
+    # Add a legend
+    fig.legend(loc="upper right")
+
+    plt.show()
 
 def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist):
     wgbs_seg_annot["segment_id"] = wgbs_seg_annot["seqnames"] + ":" + wgbs_seg_annot["start"].astype(str) + "-" + wgbs_seg_annot["end"].astype(str)
@@ -69,6 +229,8 @@ def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist):
         (wgbs_seg_annot["avg_depth"] > 10) &
         (wgbs_seg_annot["avg_depth"] < 40)
     ]
+    plot_chromosome_distribution(wgbs_seg_annot_filt)
+
     plot_depth_distribution(wgbs_seg_annot_filt)
 
     return wgbs_seg_annot_filt
@@ -447,6 +609,31 @@ def plot_correlation_distribution(correlations_df, title='Distribution of Correl
 
     plt.show()
 
+import natsort
+
+def plot_chromosome_distribution(df):
+    """
+    Function to plot the distribution of regions across chromosomes.
+
+    Parameters:
+    df (pandas.DataFrame): The DataFrame containing the chromosome data.
+    """
+    # Create a copy of the DataFrame to avoid SettingWithCopyWarning
+    df_copy = df.copy()
+
+    df_copy["chrom"] = df_copy["segment_id"].str.split(":").str[0]
+
+    # Calculate value counts
+    chrom_counts = df_copy['chrom'].value_counts()
+
+    # Use natsort to naturally sort the chromosome names
+    chrom_counts = chrom_counts.reindex(index=natsort.natsorted(chrom_counts.index))
+
+    # Plot the distribution of regions across chromosomes
+    chrom_counts.plot(kind='bar', color='b', alpha=0.6)
+    plt.xlabel('Chromosome')
+    plt.ylabel('Number of Regions')
+    plt.title('Distribution of Regions Across Chromosomes')
     plt.show()
 
 def process_wgbs_seg_files(seg_folder, cov_folder = None, convert_to_m_values=False):
@@ -480,6 +667,8 @@ def process_wgbs_seg_files(seg_folder, cov_folder = None, convert_to_m_values=Fa
     df_concat["segment_id"] = df_concat["chr"].astype(str) + ":" + df_concat["start"].astype(str) + "-" + df_concat["end"].astype(str)
 
     df_concat = df_concat.rename(columns={'chr': 'chrom'})
+
+    plot_chromosome_distribution(df_concat)
 
     df_concat = df_concat.drop(columns=['chrom', 'start', 'end', 'startCpG', 'endCpG'], errors='ignore')
 
