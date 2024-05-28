@@ -56,6 +56,36 @@ from sklearn.cluster import DBSCAN
 
 import matplotlib.ticker as mtick
 
+def summarize_segments(dataframes, filtered_dataframes, names):
+    # Initialize lists to store the number of segments for each dataframe
+    num_segments = []
+    num_filtered_segments = []
+    percentage_remaining = []
+
+    # Loop through the dataframes
+    for df, filtered_df in zip(dataframes, filtered_dataframes):
+        # Count the number of unique segments and append to the list
+        num_segments.append(len(df['segment_id'].unique()))
+
+        # Count the number of unique segments in the filtered dataframe and append to the list
+        num_filtered_segments.append(len(filtered_df['segment_id'].unique()))
+
+        # Calculate the percentage of segment IDs remaining in the filtered data compared to the dataframe and append to the list
+        percentage_remaining.append((len(filtered_df['segment_id'].unique()) / len(df['segment_id'].unique()) * 100))
+
+    # Create a summary DataFrame
+    summary_df = pd.DataFrame({
+        'Strategy': names,
+        'Number of Segments': num_segments,
+        'Number of Filtered Segments': num_filtered_segments,
+        '% Remaining After Filtering': percentage_remaining
+    })
+
+    # Format the 'Percentage Remaining After Filtering' column as a percentage
+    summary_df['% Remaining After Filtering'] = summary_df['% Remaining After Filtering'].map("{:.2f}%".format)
+
+    return summary_df
+
 def plot_importance_kde(df, whitelist_df, column = 'z_score'):
     # Plot the KDE of the original DataFrame
     sns.kdeplot(df[column], label='Before Filtering')
@@ -1034,7 +1064,21 @@ def train_and_predict_single(meth_seg_fm,
     # Create a SHAP summary plot
     shap.summary_plot(shap_values, X_test, feature_names = X_test.columns, show=False, plot_size = [7, 4])
 
-    return model, X_train, X_test, importances_df, explainer, shap_values
+    tumor_types_train_str = ', '.join(meth_seg_fm.loc[train_indices, "tumor_type"].unique())
+    tumor_types_test_str = ', '.join(meth_seg_fm.loc[test_indices, "tumor_type"].unique())
+
+    results_dict = {
+        'LOOCV': 'No',
+        'Training Tumor Types': tumor_types_train_str,
+        'Testing Tumor Types': tumor_types_test_str,
+        'Number of Training Samples': len(train_indices),
+        'Number of Testing Samples': len(test_indices),
+        'Number of Folds': 1,
+        'Average Number of Non-Zero Coefficients': len(non_zero_coeff),
+        'Accuracy': np.mean(accuracies)
+    }
+
+    return model, X_train, X_test, importances_df, explainer, shap_values, results_dict
 
 def plot_prediction_probability(pred_df, labels_dict = None):
     """
@@ -1131,6 +1175,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
     y_pred_list = []
     # Initialize lists to store prediction probabilities
     y_pred_proba_list = []
+    non_zero_coef_count_list = []
 
     fold = 1
 
@@ -1170,6 +1215,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
 
         print(f'Fold {fold}: Number of non-zero coefficients: {non_zero_coef_count}')
         fold += 1
+        non_zero_coef_count_list.append(non_zero_coef_count)
 
         # Update the dictionary with the new SHAP values
         for i, col in enumerate(X_features_current):
@@ -1308,7 +1354,22 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
     plt.ylabel('Frequency')
     plt.show()
 
-    return shap_df
+    # Get unique tumor types
+    unique_tumor_types = meth_seg_fm['tumor_type'].unique()
+    tumor_types_str = ', '.join(unique_tumor_types)
+
+    results_dict = {
+        'LOOCV': 'Yes',
+        'Training Tumor Types': tumor_types_str,
+        'Testing Tumor Types': tumor_types_str,
+        'Number of Training Samples': len(meth_seg_fm)-1,
+        'Number of Testing Samples': 1,
+        'Number of Folds': len(meth_seg_fm),
+        'Average Number of Non-Zero Coefficients': np.mean(non_zero_coef_count_list),
+        'Accuracy': np.mean(accuracies)
+    }
+
+    return shap_df, results_dict
 
 def plot_pvalue_distribution(pvalues, title='P-value Distribution'):
     """

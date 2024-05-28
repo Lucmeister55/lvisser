@@ -1,0 +1,10 @@
+,Strategy,LOOCV,Training Tumor Types,Testing Tumor Types,Number of Training Samples,Number of Testing Samples,Number of Folds,Average Number of Non-Zero Coefficients,Accuracy
+0,wgbs_tools: NB (filtered),Yes,NB,NB,7,1,8,699.75,1.0
+1,wgbs_tools: MM (filtered),Yes,MM,MM,3,1,4,3322.75,0.25
+2,wgbs_tools: sensSHY (filtered),Yes,NB,NB,3,1,4,525.25,0.0
+3,wgbs_tools: NB & MM (filtered),No,NB,MM,8,4,1,675.0,0.5
+4,wgbs_tools: NB & MM (filtered),No,MM,NB,4,8,1,463.0,0.625
+5,wgbs_tools: NB & MM (filtered),Yes,"MM, NB","MM, NB",11,1,12,152.33333333333334,0.8333333333333334
+6,wgbs_tools: NB & sensSHY (filtered),No,NB,NB,8,4,1,622.0,0.5
+7,wgbs_tools: NB & sensSHY (filtered),No,NB,NB,4,8,1,1216.0,0.5
+8,wgbs_tools: NB & sensSHY (filtered),Yes,NB,NB,11,1,12,84.75,0.75
