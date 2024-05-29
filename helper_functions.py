@@ -939,7 +939,10 @@ def train_and_predict_single(meth_seg_fm,
         plt.show()
 
     # Convert the target variable to numeric values
-    y_train = encoder.fit_transform(y_train)
+    encoder.fit(y_train)
+    # Modify the classes_ attribute of the encoder
+    encoder.classes_ = np.array(['S', 'R'])
+    y_train = encoder.transform(y_train)
     y_test = encoder.transform(y_test)
 
     # Standardize the features
@@ -1114,18 +1117,18 @@ def plot_prediction_probability(pred_df, labels_dict = None):
     ax.set_ylabel('Prediction Probability')
 
     # Color the background of the plot based on whether they are above or below 0
-    ax.axhspan(0.5, 1, facecolor='green', alpha=0.1)
-    ax.axhspan(0, 0.5, facecolor='red', alpha=0.1)
+    ax.axhspan(0.5, 1, facecolor='red', alpha=0.1)
+    ax.axhspan(0, 0.5, facecolor='green', alpha=0.1)
 
     # Get the handles and labels from seaborn
     handles, labels = scatter.get_legend_handles_labels()
 
     # Create custom patches for labels if labels_dict is provided
     if labels_dict:
-        red_patch = mpatches.Patch(color='red', alpha=0.1, label=labels_dict[0])
-        green_patch = mpatches.Patch(color='green', alpha=0.1, label=labels_dict[1])
+        red_patch = mpatches.Patch(color='red', alpha=0.1, label=labels_dict[1])
+        green_patch = mpatches.Patch(color='green', alpha=0.1, label=labels_dict[0])
         handles.extend([red_patch, green_patch])
-        labels.extend([labels_dict[0], labels_dict[1]])
+        labels.extend([labels_dict[1], labels_dict[0]])
 
     # Create custom Line2D objects for the legend
     blue_dot = Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10)
@@ -1191,7 +1194,9 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
         # Convert back to dataframes
         X_train = pd.DataFrame(X_train, columns=X_features_current)
         X_test = pd.DataFrame(X_test, columns=X_features_current)
-        y_train = encoder.fit_transform(y_train)
+        encoder.fit(y_train)
+        encoder.classes_ = np.array(['S', 'R'])
+        y_train = encoder.transform(y_train)
         y_test = encoder.transform(y_test)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
@@ -1303,7 +1308,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
     plt.figure(figsize=(6, 4))
 
     # Create a list of colors based on the mean of each feature
-    colors = ['green' if mean > 0 else 'red' for mean in top_10_coef_df.mean()]
+    colors = ['red' if mean > 0 else 'green' for mean in top_10_coef_df.mean()]
 
     # Create boxplots for the top 10 features
     sns.boxplot(data=top_10_coef_df, palette=colors)
@@ -1316,8 +1321,8 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
     plt.ylabel('Coefficient Values')
 
     # Create custom patches for the legend
-    red_patch = mpatches.Patch(color='red', label=labels_dict[0])
-    green_patch = mpatches.Patch(color='green', label=labels_dict[1])
+    red_patch = mpatches.Patch(color='red', label=labels_dict[1])
+    green_patch = mpatches.Patch(color='green', label=labels_dict[0])
 
     # Add the legend
     plt.legend(handles=[red_patch, green_patch], loc="upper left", bbox_to_anchor=(1,1))

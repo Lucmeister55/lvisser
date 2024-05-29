@@ -179,6 +179,67 @@ annotate_regions <- function(df, whitelist_df, output_dir, name, gene.obj, cgi.o
   }
   mtext(paste("Percentage of all segments annotated with at least one FRG: ", percent_overlap, "%"), side = 1, line = -2, outer = TRUE)
   dev.off()
+
+  annotations_to_df <- function(segment_ids, obj_list) {
+    # Initialize an empty dataframe with segment_ids
+    df_annotations <- data.frame(segment_id = segment_ids)
+    
+    # Iterate over each members dataframe in the list
+    for (name in names(obj_list)) {
+      obj <- obj_list[[name]]
+
+      members <- obj@members
+
+      if (is.list(members)) {
+        # Access the matrix in the S4 object
+        members <- as.data.frame(obj@members)
+      }
+      
+      # Get the column names where each row is 1
+      annotations <- apply(members, 1, function(x) {
+        names(x)[which(x == 1)]
+      })
+      
+      # Combine the annotations into a comma-separated string
+      annotations <- sapply(annotations, function(x) {
+        paste(x, collapse = ",")
+      })
+      
+      # Add the annotations as a new column in the dataframe
+      df_annotations[[paste(name, "members", sep = "_")]] <- annotations
+
+      if (name == "gene") {
+        dist_to_tss <- obj@dist.to.TSS[, c("dist.to.feature", "feature.name")]
+        df_annotations[[paste(name, "dist.to.feature", sep = "_")]] <- dist_to_tss[, "dist.to.feature"]
+        df_annotations[[paste(name, "feature.name", sep = "_")]] <- dist_to_tss[, "feature.name"]
+      }
+    }
+    
+    return(df_annotations)
+  }
+  hyper_obj_list = list(
+    gene = geneDMRann_hyper, 
+    cgi = cgiDMRann_hyper, 
+    reg = regDMRann_hyper
+  )
+
+  hypo_obj_list = list(
+    gene = geneDMRann_hypo, 
+    cgi = cgiDMRann_hypo, 
+    reg = regDMRann_hypo
+  )
+
+  hyper_df_annot = annotations_to_df(df_hyper$segment_id, hyper_obj_list)
+  hypo_df_annot = annotations_to_df(df_hypo$segment_id, hypo_obj_list)
+
+  df_combined <- rbind(hyper_df_annot, hypo_df_annot)
+
+  # Left join df with hyper_df_annot
+  df <- merge(df, df_combined, by = "segment_id", all.x = TRUE)
+
+  region_gene_associations_file <- paste0(output_dir, "/region_gene_associations_", name, ".csv")
+
+  write.csv(df, file = region_gene_associations_file)
 }
 ```
 
@@ -501,5 +562,3 @@ for (i in 1:length(all_shap_data)) {
   create_karyogram(merged_list[[i]], output_dir_name, name, "z_score")
 }
 ```
-
-
