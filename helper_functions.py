@@ -99,7 +99,6 @@ def plot_importance_kde(df, whitelist_df, column = 'z_score'):
     # Set the labels
     plt.xlabel('Importance Score')
     plt.ylabel('Density')
-    plt.title('KDE of Importance Scores')
 
     # Show the plot
     plt.legend()
@@ -244,7 +243,7 @@ def plot_importance_and_regions(df, importance_col = "z_score"):
 
     plt.show()
 
-def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist):
+def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist, frg = True, coverage = True):
     wgbs_seg_annot["segment_id"] = wgbs_seg_annot["seqnames"] + ":" + wgbs_seg_annot["start"].astype(str) + "-" + wgbs_seg_annot["end"].astype(str)
     wgbs_seg_annot = wgbs_seg_annot.merge(wgbs_segcov[["segment_id", "avg_depth"]], on = "segment_id", how = "left")
 
@@ -254,11 +253,19 @@ def filter_seg_annot(wgbs_seg_annot, wgbs_segcov, whitelist):
     percentage = (len(frg_associated_segment_ids) / len(unique_segment_ids)) * 100
     print(f"The percentage of unique segment_ids associated with at least one frg is {percentage:.2f}%")
 
-    wgbs_seg_annot_filt = wgbs_seg_annot[
-        (wgbs_seg_annot["annotated_genes"].isin(whitelist["gene_symbol"])) &
-        (wgbs_seg_annot["avg_depth"] > 10) &
-        (wgbs_seg_annot["avg_depth"] < 40)
-    ]
+    wgbs_seg_annot_filt = wgbs_seg_annot.copy()
+    
+    if frg:
+        wgbs_seg_annot_filt = wgbs_seg_annot[
+            (wgbs_seg_annot["annotated_genes"].isin(whitelist["gene_symbol"]))
+        ]
+    
+    if coverage:
+        wgbs_seg_annot_filt = wgbs_seg_annot_filt[
+            (wgbs_seg_annot["avg_depth"] > 10) &
+            (wgbs_seg_annot["avg_depth"] < 40)
+        ]
+    
     plot_chromosome_distribution(wgbs_seg_annot_filt)
 
     plot_depth_distribution(wgbs_seg_annot_filt)
@@ -781,6 +788,8 @@ def process_wgbs_dmr_files(folder):
 
     return df_concat
 
+from numpy import unique
+
 def filter_dmr(X_train_df, X_test_df, groups_train, test = 'ttest', p_value_threshold=0.05, diff_threshold=0.1):
     warnings.filterwarnings('ignore', category=RuntimeWarning)
 
@@ -804,18 +813,13 @@ def filter_dmr(X_train_df, X_test_df, groups_train, test = 'ttest', p_value_thre
     p_values = np.empty(X_train.shape[1])
     if test == 'ttest':
         test_statistic, p_values = ttest_ind(R_data, S_data, axis=0, nan_policy='omit')
-        # for i in range(X_train.shape[1]):
-        #     if len(np.unique(R_data[:, i])) > 1 or len(np.unique(S_data[:, i])) > 1:
-        #         _, p_values[i] = ttest_ind(R_data[:, i], S_data[:, i], nan_policy='omit')
-        #     else:
-        #         p_values[i] = np.nan
     elif test == 'kruskal':
-        test_statistic, p_values = kruskal(R_data, S_data, axis=0, nan_policy='omit')
-        # for i in range(X_train.shape[1]):
-        #     if len(np.unique(R_data[:, i])) > 1 or len(np.unique(S_data[:, i])) > 1:
-        #         _, p_values[i] = kruskal(R_data[:, i], S_data[:, i], nan_policy='omit')
-        #     else:
-        #         p_values[i] = np.nan
+        p_values = np.empty(R_data.shape[1])
+        for i in range(R_data.shape[1]):
+            if np.array_equal(R_data[:, i], S_data[:, i]):
+                p_values[i] = np.nan
+            else:
+                _, p_values[i] = kruskal(R_data[:, i], S_data[:, i], nan_policy='omit')
     else:
         raise ValueError("Invalid test. Only 'ttest' and 'kruskal' are supported.")
 

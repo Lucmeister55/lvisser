@@ -18,11 +18,14 @@ whitelist <- read.csv("/data/lvisser/ferroptosis_gene_whitelists/complete_gene_l
 
 ```{r}
 DE_results_human_Group_R_S_MM <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_S_MM.csv") %>%
-  filter(padj < 0.05)
+  filter(padj < 0.05) %>%
+  dplyr::select(baseMean,log2FoldChange,lfcSE,pvalue,padj,name,type,description)
 DE_results_human_Group_R_S_NB <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_S_NB.csv") %>%
-  filter(padj < 0.05)
+  filter(padj < 0.05) %>%
+  dplyr::select(baseMean,log2FoldChange,lfcSE,pvalue,padj,name,type,description)
 DE_results_human_Group_R_Ss_sensSHY <- read.csv("/data/lvisser/DE_genes/DE_results_human_Group_R_Ss_sensSHY.csv") %>%
-  filter(padj < 0.05)
+  filter(padj < 0.05) %>%
+  dplyr::select(baseMean,log2FoldChange,lfcSE,pvalue,padj,name,type,description)
 
 # Create a list of dataframes
 DE_results_list <- list(
@@ -237,9 +240,37 @@ annotate_regions <- function(df, whitelist_df, output_dir, name, gene.obj, cgi.o
   # Left join df with hyper_df_annot
   df <- merge(df, df_combined, by = "segment_id", all.x = TRUE)
 
+  df <- df[order(df$z_score, decreasing = TRUE), ] %>%
+    distinct()
+
   region_gene_associations_file <- paste0(output_dir, "/region_gene_associations_", name, ".csv")
 
   write.csv(df, file = region_gene_associations_file)
+
+  hyper_whitelist_obj_list = list(
+    gene = geneDMRann_hyper_whitelist, 
+    cgi = cgiDMRann_hyper_whitelist, 
+    reg = regDMRann_hyper_whitelist
+  )
+
+  hypo_whitelist_obj_list = list(
+    gene = geneDMRann_hypo_whitelist, 
+    cgi = cgiDMRann_hypo_whitelist, 
+    reg = regDMRann_hypo_whitelist
+  )
+
+  hyper_whitelist_df_annot = annotations_to_df(whitelist_df_hyper$segment_id, hyper_whitelist_obj_list)
+  hypo_whitelist_df_annot = annotations_to_df(whitelist_df_hypo$segment_id, hypo_whitelist_obj_list)
+
+  whitelist_df_combined <- rbind(hyper_whitelist_df_annot, hypo_whitelist_df_annot)
+
+  # Left join df with hyper_df_annot
+  whitelist_df <- merge(whitelist_df, whitelist_df_combined, by = "segment_id", all.x = TRUE)
+
+  whitelist_df <- whitelist_df[order(whitelist_df$z_score, decreasing = TRUE), ] %>%
+    distinct()
+
+  write.csv(whitelist_df, file = paste0(output_dir, "/region_gene_associations_whitelist_", name, ".csv"))
 }
 ```
 
@@ -527,7 +558,8 @@ read_shap_csv <- function(file_path) {
   df <- read.csv(file_path)
 
   df <- df %>%
-    separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]", remove = FALSE)
+    separate("segment_id", into = c("chromosome", "start", "end"), sep = "[:-]", remove = FALSE) %>%
+    filter(z_score > 0)
 
   return(df)
 }
@@ -557,7 +589,7 @@ for (i in 1:length(all_shap_data)) {
   dir.create(output_dir_name, showWarnings = FALSE)
   merged_df_list <- enrich_regions(as(all_shap_data[[i]],"GRanges"), output_dir_name, name, DE_results_list[[dge_names[i]]], whitelist)
   merged_list[[name]] <- merged_df_list[[1]]
-  annotate_regions(all_shap_data[[i]], merged_df_list[[2]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
+  annotate_regions(merged_df_list[[1]], merged_df_list[[2]], output_dir_name, name, gene.obj, cgi.obj, reg.obj)
   link_meth_to_dge(merged_list[[i]], output_dir_name, name)
   create_karyogram(merged_list[[i]], output_dir_name, name, "z_score")
 }
