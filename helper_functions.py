@@ -641,8 +641,8 @@ def plot_correlation_distribution(correlations_df, title='Distribution of Correl
     # Calculate and display the number of correlations above and below 0
     above_zero = sum(correlations_df['correlation'] > 0)
     below_zero = sum(correlations_df['correlation'] < 0)
-    plt.text(0, 1.15, f'Negative correlations: {above_zero}', transform=plt.gca().transAxes)
-    plt.text(0, 1.1, f'Positive correlations: {below_zero}', transform=plt.gca().transAxes)
+    plt.text(0, 1.15, f'Negative correlations: {below_zero}', transform=plt.gca().transAxes)
+    plt.text(0, 1.1, f'Positive correlations: {above_zero}', transform=plt.gca().transAxes)
 
     plt.show()
 
@@ -875,13 +875,15 @@ def train_and_predict_single(meth_seg_fm,
                              test_size = 0.25, 
                              train_indices=None, 
                              test_indices=None, 
-                             reg = False, 
+                             reg = False,
+                             l1_ratio = 0.5,
+                             C = 1.0, 
                              dmr = None, 
+                             p_value_threshold = 0.05,
+                             diff_threshold = 0.1,
                              perform_pca = False, 
                              n_components = 2, 
-                             model_str = "lr", 
-                             p_value_threshold = 0.05,
-                             diff_threshold = 0.1):
+                             model_str = "lr"):
     # Initialize the encoder and scaler
     encoder = LabelEncoder()
     scaler = StandardScaler()
@@ -971,7 +973,7 @@ def train_and_predict_single(meth_seg_fm,
         model = DecisionTreeClassifier()
     elif model_str == "lr":
         if reg:
-            model = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = 0.5, max_iter=10000)
+            model = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = l1_ratio, C = C, max_iter=10000)
         else:
             model = LogisticRegression()
     
@@ -1153,7 +1155,13 @@ def plot_prediction_probability(pred_df, labels_dict = None):
     # Show the plot
     plt.show()
 
-def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold = 0.1):
+def train_and_predict_loo(meth_seg_fm, 
+                          reg = False,
+                          l1_ratio = 0.5,
+                          C = 1.0,
+                          dmr = None,
+                          p_value_threshold = 0.05,
+                          diff_threshold = 0.1):
     # Initialize the encoder, scaler and classifier
     encoder = LabelEncoder()
     scaler = StandardScaler()
@@ -1165,7 +1173,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
     
     # Fit the logistic regression model
     if reg:
-        clf = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = 0.5, max_iter=10000)
+        clf = LogisticRegression(penalty = 'elasticnet', solver = 'saga', l1_ratio = l1_ratio, C = C, max_iter=10000)
     else:
         clf = LogisticRegression()
 
@@ -1191,7 +1199,7 @@ def train_and_predict_loo(meth_seg_fm, reg = False, dmr = None, diff_threshold =
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
         if dmr:
             groups_train = meth_seg_fm["Group"].iloc[train_index]
-            X_train, X_test, filtered_dmr, dmr_results = filter_dmr(X_train, X_test, groups_train, dmr, diff_threshold = 0.1)
+            X_train, X_test, filtered_dmr, dmr_results = filter_dmr(X_train, X_test, groups_train, dmr, diff_threshold = diff_threshold, p_value_threshold=p_value_threshold)
         X_features_current = X_train.columns
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)

@@ -140,7 +140,7 @@ annotate_regions <- function(df, whitelist_df, output_dir, name, gene.obj, cgi.o
   height <- 600
 
   # Adjust the margins of the plots
-  par(mar = c(2, 2, 2, 2), oma = c(0, 0, 0, 0))
+  par(mar = c(1, 1, 1, 1), oma = c(0, 0, 0, 0))
 
   # Add the subplots to the existing plots
   png(output_file_gene, width = width, height = height)
