@@ -41,6 +41,7 @@ from itertools import product
 from matplotlib.lines import Line2D
 from scipy.stats import gaussian_kde
 import io
+import pickle
 
 import sklearn
 from sklearn.model_selection import train_test_split, cross_val_score, LeaveOneOut
@@ -55,6 +56,40 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.cluster import DBSCAN
 
 import matplotlib.ticker as mtick
+
+def plot_segment_lengths(df):
+    # Get segment IDs
+    segments = df.select_dtypes(include=[np.number]).columns.tolist()
+
+    # Function to calculate length of segment
+    def segment_length(segment):
+        _, positions = segment.split(':')
+        start, end = map(int, positions.split('-'))
+        return end - start + 1
+
+    # Apply the function to each segment
+    lengths = [segment_length(segment) for segment in segments]
+
+    # Calculate average length
+    average_length = np.mean(lengths)
+
+    # Create histogram
+    plt.hist(lengths, bins=30, alpha=0.5, label='Lengths')
+
+    # Add vertical line for average length
+    plt.axvline(average_length, color='r', linestyle='dashed', linewidth=2, label=f'Average Length: {average_length:.2f}')
+
+    # Add labels and legend
+    plt.xlabel('Length')
+    plt.ylabel('Frequency')
+    plt.legend()
+
+    # Set y-axis to logarithmic scale
+    plt.yscale('log')
+    plt.xscale('log')
+
+    # Show plot
+    plt.show()
 
 def summarize_segments(dataframes, filtered_dataframes, names):
     # Initialize lists to store the number of segments for each dataframe
@@ -95,6 +130,12 @@ def plot_importance_kde(df, whitelist_df, column = 'z_score'):
 
     # Plot the KDE of the whitelisted DataFrame
     sns.kdeplot(df_whitelist[column], label='After Filtering')
+
+    # Create a random subset of the original DataFrame with the same size as the whitelist
+    df_random_subset = df[column].sample(n=len(df_whitelist[column]))
+
+    # Plot the KDE of the random subset
+    sns.kdeplot(df_random_subset, label='Random Subset')
 
     # Set the labels
     plt.xlabel('Importance Score')
@@ -817,11 +858,14 @@ def filter_dmr(X_train_df, X_test_df, groups_train, test = 'ttest', p_value_thre
         p_values = np.empty(R_data.shape[1])
         for i in range(R_data.shape[1]):
             if np.array_equal(R_data[:, i], S_data[:, i]):
-                p_values[i] = np.nan
+                p_values[i] = 1.0
             else:
                 _, p_values[i] = kruskal(R_data[:, i], S_data[:, i], nan_policy='omit')
     else:
         raise ValueError("Invalid test. Only 'ttest' and 'kruskal' are supported.")
+
+    # Fill NaN values with 1
+    p_values = np.nan_to_num(p_values, nan=1)
 
     # Correct for multiple testing
     corrected_p_values = multipletests(p_values, method='fdr_bh')[1]
@@ -919,8 +963,8 @@ def train_and_predict_single(meth_seg_fm,
         X_features_current = X_train.columns
         print(f"DMR has removed {len(X_features_prev)-len(X_features_current)} features of the original {len(X_features_prev)}.")
 
-        # Create a 1x2 grid for the plots
-        fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+        # Create a 1x3 grid for the plots
+        fig, axs = plt.subplots(1, 3, figsize=(12, 4))
 
         # Plot a histogram of the p-values
         n, bins, patches = axs[0].hist(dmr_results['p_value'], bins=30)
@@ -939,6 +983,15 @@ def train_and_predict_single(meth_seg_fm,
         axs[1].set_title('Distribution of Mean Differences')
         axs[1].set_xlabel('Mean Difference')
         axs[1].set_ylabel('Frequency')
+
+        # Plot a histogram of the q-values
+        n, bins, patches = axs[2].hist(dmr_results['q_value'], bins=30)
+        for i in range(len(patches)):
+            if (bins[i] <= p_value_threshold):  # Replace p_value_threshold with the appropriate threshold for q-values
+                patches[i].set_facecolor('red')
+        axs[2].set_title('Distribution of Q-values')
+        axs[2].set_xlabel('Q-value')
+        axs[2].set_ylabel('Frequency')
 
         # Display the plots
         plt.tight_layout()

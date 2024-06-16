@@ -494,6 +494,11 @@ for (i in 1:length(all_seg_data)) {
 }
 ```
 
+```{r}
+output_dir_name <- "/data/lvisser/post_analysis/rwgbs_rob_seg"
+merged_df <- enrich_regions(as(all_seg_data[[i]],"GRanges"), output_dir_name, name)
+```
+
 ## DMR
 
 ```{r}
